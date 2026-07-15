@@ -35,11 +35,11 @@ class TransferManager(
             val localSize = localFile.length()
             if (localSize < fileSize && existingRecord.status != TransferStatus.COMPLETED) {
                 // Resume from where the file currently is
-                transferDao.updateProgress(existingRecord.fileId, localSize, TransferStatus.TRANSFERRING)
+                transferDao.updateProgress(existingRecord.fileId, TransferDirection.RECEIVE, localSize, TransferStatus.TRANSFERRING)
                 return@withContext localSize
             } else if (localSize == fileSize) {
                 // Already fully downloaded
-                transferDao.updateProgress(existingRecord.fileId, fileSize, TransferStatus.COMPLETED)
+                transferDao.updateProgress(existingRecord.fileId, TransferDirection.RECEIVE, fileSize, TransferStatus.COMPLETED)
                 return@withContext fileSize
             }
         }
@@ -90,7 +90,7 @@ class TransferManager(
                     val now = System.currentTimeMillis()
                     // Throttle DB updates to once every 500ms to save resources
                     if (now - lastUpdateMs > 500) {
-                        transferDao.updateProgress(record.fileId, bytesTransferred, TransferStatus.TRANSFERRING)
+                        transferDao.updateProgress(record.fileId, TransferDirection.RECEIVE, bytesTransferred, TransferStatus.TRANSFERRING)
                         lastUpdateMs = now
                     }
 
@@ -99,10 +99,10 @@ class TransferManager(
                 }
 
                 // Finalize complete transfer
-                transferDao.updateProgress(record.fileId, bytesTransferred, TransferStatus.COMPLETED)
+                transferDao.updateProgress(record.fileId, TransferDirection.RECEIVE, bytesTransferred, TransferStatus.COMPLETED)
                 onProgress(bytesTransferred, 100.0)
             } catch (e: Exception) {
-                transferDao.updateProgress(record.fileId, bytesTransferred, TransferStatus.FAILED)
+                transferDao.updateProgress(record.fileId, TransferDirection.RECEIVE, bytesTransferred, TransferStatus.FAILED)
                 throw e
             }
         }
@@ -117,11 +117,11 @@ class TransferManager(
         startOffset: Long,
         onProgress: (Long, Double) -> Unit
     ) = withContext(Dispatchers.IO) {
-        val record = transferDao.getTransferById(fileId) ?: return@withContext
+        val record = transferDao.getTransferByIdAndDirection(fileId, TransferDirection.SEND) ?: return@withContext
         val file = File(record.filePath)
 
         if (!file.exists()) {
-            transferDao.updateProgress(fileId, record.bytesTransferred, TransferStatus.FAILED)
+            transferDao.updateProgress(fileId, TransferDirection.SEND, record.bytesTransferred, TransferStatus.FAILED)
             throw IllegalArgumentException("File not found on disk: ${file.absolutePath}")
         }
 
@@ -134,7 +134,7 @@ class TransferManager(
             var lastUpdateMs = System.currentTimeMillis()
 
             try {
-                transferDao.updateProgress(fileId, bytesSent, TransferStatus.TRANSFERRING)
+                transferDao.updateProgress(fileId, TransferDirection.SEND, bytesSent, TransferStatus.TRANSFERRING)
                 
                 while (raf.read(buffer).also { bytesRead = it } != -1) {
                     outputStream.write(buffer, 0, bytesRead)
@@ -142,7 +142,7 @@ class TransferManager(
 
                     val now = System.currentTimeMillis()
                     if (now - lastUpdateMs > 500) {
-                        transferDao.updateProgress(fileId, bytesSent, TransferStatus.TRANSFERRING)
+                        transferDao.updateProgress(fileId, TransferDirection.SEND, bytesSent, TransferStatus.TRANSFERRING)
                         lastUpdateMs = now
                     }
 
@@ -150,10 +150,10 @@ class TransferManager(
                     onProgress(bytesSent, percentage)
                 }
 
-                transferDao.updateProgress(fileId, bytesSent, TransferStatus.COMPLETED)
+                transferDao.updateProgress(fileId, TransferDirection.SEND, bytesSent, TransferStatus.COMPLETED)
                 onProgress(bytesSent, 100.0)
             } catch (e: Exception) {
-                transferDao.updateProgress(fileId, bytesSent, TransferStatus.FAILED)
+                transferDao.updateProgress(fileId, TransferDirection.SEND, bytesSent, TransferStatus.FAILED)
                 throw e
             }
         }
