@@ -42,16 +42,22 @@ class SkiffBackgroundService : Service() {
         var webSocketClient: WebSocketClient? = null
         var isServiceRunning = false
         var peerIpAddress: String? = null
+        var instance: SkiffBackgroundService? = null
 
         fun reconnect(context: Context) {
             connectionStatus.value = "Connecting..."
-            webSocketClient?.disconnect()
-            webSocketClient = null
-            val intent = Intent(context, SkiffBackgroundService::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
+            val service = instance
+            if (service != null) {
+                service.webSocketClient?.disconnect()
+                service.webSocketClient = null
+                service.initializeWebSocket()
             } else {
-                context.startService(intent)
+                val intent = Intent(context, SkiffBackgroundService::class.java)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(intent)
+                } else {
+                    context.startService(intent)
+                }
             }
         }
 
@@ -161,6 +167,7 @@ class SkiffBackgroundService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         db = AppDatabase.getDatabase(this)
         createNotificationChannel()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -382,6 +389,7 @@ class SkiffBackgroundService : Service() {
         serverSocket?.close()
         serverSocket = null
         isServiceRunning = false
+        instance = null
         super.onDestroy()
     }
 }
