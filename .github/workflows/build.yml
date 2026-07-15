@@ -36,17 +36,14 @@ jobs:
       - name: Build Android App (Release APK)
         run: |
           cd trans_decoder_app
-          if [ -f "./gradlew" ]; then
-            chmod +x gradlew
-            ./gradlew assembleRelease
-            # Map output file to target release directory
-            mkdir -p app/build/outputs/apk/release
-            find . -name "*.apk" -exec cp {} app/build/outputs/apk/release/app-release.apk \;
-          else
-            echo "No Gradle wrapper found in trans_decoder_app yet. Staging mock APK for pipeline testing."
-            mkdir -p app/build/outputs/apk/release
-            echo "Skiff App Client v0.0.1 Build Sandbox Mock APK" > app/build/outputs/apk/release/app-release.apk
-          fi
+          # Generate gradle wrapper dynamically inside CI environment
+          gradle wrapper
+          chmod +x gradlew
+          ./gradlew assembleRelease
+          
+          # Find compiled release APK and place it in the target release directory
+          mkdir -p app/build/outputs/apk/release
+          find app/build/outputs/apk/ -name "*.apk" -exec cp {} app/build/outputs/apk/release/app-release.apk \;
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
