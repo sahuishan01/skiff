@@ -1,0 +1,20 @@
+# Rust / Cargo
+/trans_decoder_server/target/
+/trans_decoder_server/.env
+
+# Android / Kotlin
+/trans_decoder_app/.gradle/
+/trans_decoder_app/build/
+/trans_decoder_app/local.properties
+/trans_decoder_app/.idea/
+**/*.apk
+**/*.aar
+**/*.keystore
+
+# Python & Virtual Environments
+__pycache__/
+*.py[cod]
+*$py.class
+/trans_decoder_app/.venv/
+.venv/
+.env
