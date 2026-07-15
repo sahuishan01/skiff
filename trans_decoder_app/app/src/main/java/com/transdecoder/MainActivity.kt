@@ -376,7 +376,7 @@ fun TransferProgressItem(transfer: TransferEntity) {
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
-                        text = "${transfer.bytesTransferred / 1024 / 1024}MB / ${transfer.fileSize / 1024 / 1024}MB",
+                        text = "${formatBytes(transfer.bytesTransferred)} / ${formatBytes(transfer.fileSize)}",
                         fontSize = 11.sp,
                         color = Color.Gray
                     )
@@ -396,5 +396,13 @@ fun TransferProgressItem(transfer: TransferEntity) {
                 )
             }
         }
+    }
+}
+
+fun formatBytes(bytes: Long): String {
+    return when {
+        bytes >= 1024 * 1024 -> "${bytes / 1024 / 1024}MB"
+        bytes >= 1024 -> "${bytes / 1024}KB"
+        else -> "${bytes}B"
     }
 }

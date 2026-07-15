@@ -116,13 +116,14 @@ class SkiffBackgroundService : Service() {
                     kotlinx.coroutines.delay(1000)
                     socket = Socket(targetIp, 8096)
                     val output = socket.getOutputStream()
-                    val writer = java.io.PrintWriter(output, true)
 
                     val record = dbInstance.transferDao().getTransferById(fileId) ?: return@launch
                     val startOffset = 0L
 
                     // Send header info: "FILE_ID|FILE_HASH|START_OFFSET"
-                    writer.println("${record.fileId}|${record.fileHash}|$startOffset")
+                    val header = "${record.fileId}|${record.fileHash}|$startOffset\n"
+                    output.write(header.toByteArray(Charsets.UTF_8))
+                    output.flush()
 
                     // Stream file data from Android ContentResolver (SAF URI)
                     context.contentResolver.openInputStream(uri)?.use { inputStream ->
@@ -239,9 +240,17 @@ class SkiffBackgroundService : Service() {
     private suspend fun handleIncomingTcpConnection(socket: Socket) {
         try {
             val input = socket.getInputStream()
-            val reader = java.io.BufferedReader(java.io.InputStreamReader(input))
 
-            val header = reader.readLine() ?: return
+            // Read metadata header byte-by-byte to prevent buffering and losing the binary payload
+            val bos = java.io.ByteArrayOutputStream()
+            var b: Int
+            while (input.read().also { b = it } != -1) {
+                if (b == '\n'.code) break
+                if (b != '\r'.code) bos.write(b)
+            }
+            val header = bos.toString("UTF-8")
+            if (header.isEmpty()) return
+
             val parts = header.split("|")
             if (parts.size < 3) return
             val fileId = parts[0]
