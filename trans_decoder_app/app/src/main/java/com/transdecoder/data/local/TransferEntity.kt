@@ -1,7 +1,6 @@
 package com.transdecoder.data.local
 
 import androidx.room.Entity
-import androidx.room.PrimaryKey
 
 enum class TransferStatus {
     PENDING,
@@ -16,9 +15,9 @@ enum class TransferDirection {
     RECEIVE
 }
 
-@Entity(tableName = "transfers")
+@Entity(tableName = "transfers", primaryKeys = ["fileId", "direction"])
 data class TransferEntity(
-    @PrimaryKey val fileId: String, // UUID
+    val fileId: String, // UUID
     val sessionId: String, // UUID
     val fileName: String,
     val filePath: String,

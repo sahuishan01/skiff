@@ -143,7 +143,7 @@ class SkiffBackgroundService : Service() {
                     AppLogger.log("TCP Client: Connected successfully to receiver at $targetIp:8096")
                     val output = socket.getOutputStream()
 
-                    val record = dbInstance.transferDao().getTransferById(fileId) ?: return@launch
+                    val record = dbInstance.transferDao().getTransferByIdAndDirection(fileId, TransferDirection.SEND) ?: return@launch
                     val startOffset = 0L
 
                     // Send header info: "FILE_ID|FILE_HASH|START_OFFSET"
@@ -163,6 +163,7 @@ class SkiffBackgroundService : Service() {
 
                             dbInstance.transferDao().updateProgress(
                                 fileId = fileId,
+                                direction = TransferDirection.SEND,
                                 bytesTransferred = totalSent,
                                 status = if (totalSent >= record.fileSize) TransferStatus.COMPLETED else TransferStatus.TRANSFERRING
                             )
@@ -182,7 +183,7 @@ class SkiffBackgroundService : Service() {
                 } catch (e: Exception) {
                     AppLogger.log("TCP Client Error: ${e.message}")
                     e.printStackTrace()
-                    dbInstance.transferDao().updateProgress(fileId, 0L, TransferStatus.FAILED)
+                    dbInstance.transferDao().updateProgress(fileId, TransferDirection.SEND, 0L, TransferStatus.FAILED)
                 } finally {
                     socket?.close()
                 }
@@ -295,7 +296,7 @@ class SkiffBackgroundService : Service() {
             val fileHash = parts[1]
             val startOffset = parts[2].toLong()
 
-            val record = db.transferDao().getTransferById(fileId)
+            val record = db.transferDao().getTransferByIdAndDirection(fileId, TransferDirection.RECEIVE)
             if (record != null) {
                 AppLogger.log("TCP Server: Streaming payload to storage: ${record.filePath}...")
                 val destinationFile = File(record.filePath)
@@ -313,6 +314,7 @@ class SkiffBackgroundService : Service() {
 
                         db.transferDao().updateProgress(
                             fileId = fileId,
+                            direction = TransferDirection.RECEIVE,
                             bytesTransferred = totalReceived,
                             status = if (totalReceived >= record.fileSize) TransferStatus.COMPLETED else TransferStatus.TRANSFERRING
                         )
@@ -390,10 +392,10 @@ class SkiffBackgroundService : Service() {
             is WsMessage.ProgressUpdated -> {
                 // Receiver side: update incoming file bytes dynamically as received
                 serviceScope.launch(Dispatchers.IO) {
-                    val status = db.transferDao().getTransferById(message.file_id)?.let {
+                    val status = db.transferDao().getTransferByIdAndDirection(message.file_id, TransferDirection.RECEIVE)?.let {
                         if (message.bytes_transferred >= it.fileSize) TransferStatus.COMPLETED else TransferStatus.TRANSFERRING
                     } ?: TransferStatus.TRANSFERRING
-                    db.transferDao().updateProgress(message.file_id, message.bytes_transferred, status)
+                    db.transferDao().updateProgress(message.file_id, TransferDirection.RECEIVE, message.bytes_transferred, status)
                 }
             }
             else -> {}
