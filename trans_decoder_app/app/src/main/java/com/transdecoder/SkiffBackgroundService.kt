@@ -296,7 +296,12 @@ class SkiffBackgroundService : Service() {
             val fileHash = parts[1]
             val startOffset = parts[2].toLong()
 
-            val record = db.transferDao().getTransferByIdAndDirection(fileId, TransferDirection.RECEIVE)
+            var record: TransferEntity? = null
+            for (i in 1..50) {
+                record = db.transferDao().getTransferByIdAndDirection(fileId, TransferDirection.RECEIVE)
+                if (record != null) break
+                kotlinx.coroutines.delay(100)
+            }
             if (record != null) {
                 AppLogger.log("TCP Server: Streaming payload to storage: ${record.filePath}...")
                 val destinationFile = File(record.filePath)
