@@ -7,6 +7,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.os.IBinder
+import androidx.compose.runtime.mutableStateListOf
 import androidx.core.app.NotificationCompat
 import com.transdecoder.data.local.AppDatabase
 import com.transdecoder.data.local.TransferEntity
@@ -27,6 +28,23 @@ import java.net.Socket
 import java.util.Collections
 import java.util.UUID
 
+// Observable application logger for on-screen live diagnostics
+object AppLogger {
+    val logHistory = mutableStateListOf<String>()
+
+    fun log(message: String) {
+        val timestamp = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
+        val entry = "[$timestamp] $message"
+        CoroutineScope(Dispatchers.Main).launch {
+            logHistory.add(entry)
+            if (logHistory.size > 150) {
+                logHistory.removeAt(0)
+            }
+        }
+        android.util.Log.d("SkiffDebug", entry)
+    }
+}
+
 class SkiffBackgroundService : Service() {
 
     companion object {
@@ -45,6 +63,7 @@ class SkiffBackgroundService : Service() {
         var instance: SkiffBackgroundService? = null
 
         fun reconnect(context: Context) {
+            AppLogger.log("Initiating manual refresh/reconnection...")
             connectionStatus.value = "Connecting..."
             val service = instance
             if (service != null) {
@@ -52,6 +71,7 @@ class SkiffBackgroundService : Service() {
                 webSocketClient = null
                 service.initializeWebSocket()
             } else {
+                AppLogger.log("Service not running. Launching service intent...")
                 val intent = Intent(context, SkiffBackgroundService::class.java)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     context.startForegroundService(intent)
@@ -62,23 +82,27 @@ class SkiffBackgroundService : Service() {
         }
 
         fun sendPairRequest(targetCode: String) {
+            AppLogger.log("Sending pairing request to code: $targetCode")
             connectionStatus.value = "Connecting to $targetCode..."
             webSocketClient?.sendMessage(WsMessage.RequestConnection(targetCode))
         }
 
         fun acceptPairRequest(senderId: String) {
+            AppLogger.log("Accepting pairing request from peer: $senderId")
             activePeerDeviceId.value = senderId
             connectionStatus.value = "Paired & Connected"
             webSocketClient?.sendMessage(WsMessage.AcceptRequest(senderId))
 
             // Share local IP address with sender via IceCandidate payload
             val localIp = getLocalIpAddress() ?: "127.0.0.1"
+            AppLogger.log("Sharing local IP address with peer: $localIp")
             webSocketClient?.sendMessage(WsMessage.IceCandidate(senderId, "LOCAL_IP:$localIp"))
 
             activeIncomingRequest.value = null
         }
 
         fun rejectPairRequest(senderId: String) {
+            AppLogger.log("Rejecting pairing request from peer: $senderId")
             webSocketClient?.sendMessage(WsMessage.RejectRequest(senderId))
             activeIncomingRequest.value = null
         }
@@ -98,14 +122,15 @@ class SkiffBackgroundService : Service() {
                     }
                 }
             } catch (ex: Exception) {
-                ex.printStackTrace()
+                AppLogger.log("Failed to resolve local IP: ${ex.message}")
             }
             return null
         }
 
         // Send file data using TCP socket client connection
         fun sendFileTcp(context: Context, fileId: String, uri: Uri) {
-            val targetIp = peerIpAddress ?: "127.0.0.1" // Fallback to localhost if testing on same device
+            val targetIp = peerIpAddress ?: "127.0.0.1"
+            AppLogger.log("TCP Client: Connecting to $targetIp:8096 to transfer file...")
             val dbInstance = AppDatabase.getDatabase(context)
             val webSocket = webSocketClient
 
@@ -115,6 +140,7 @@ class SkiffBackgroundService : Service() {
                     // Delay to let the receiver start its server
                     kotlinx.coroutines.delay(1000)
                     socket = Socket(targetIp, 8096)
+                    AppLogger.log("TCP Client: Connected successfully to receiver at $targetIp:8096")
                     val output = socket.getOutputStream()
 
                     val record = dbInstance.transferDao().getTransferById(fileId) ?: return@launch
@@ -127,7 +153,7 @@ class SkiffBackgroundService : Service() {
 
                     // Stream file data from Android ContentResolver (SAF URI)
                     context.contentResolver.openInputStream(uri)?.use { inputStream ->
-                        val buffer = ByteArray(64 * 1024) // 64KB buffer blocks
+                        val buffer = ByteArray(64 * 1024)
                         var bytesRead: Int
                         var totalSent = 0L
 
@@ -152,7 +178,9 @@ class SkiffBackgroundService : Service() {
                         }
                     }
                     output.flush()
+                    AppLogger.log("TCP Client: Completed streaming bytes: ${record.fileSize}")
                 } catch (e: Exception) {
+                    AppLogger.log("TCP Client Error: ${e.message}")
                     e.printStackTrace()
                     dbInstance.transferDao().updateProgress(fileId, 0L, TransferStatus.FAILED)
                 } finally {
@@ -197,6 +225,7 @@ class SkiffBackgroundService : Service() {
         }
         val deviceId = id!!
 
+        AppLogger.log("Initializing WebSocket Client to ${Config.SIGNALING_SERVER_URL}...")
         webSocketClient = WebSocketClient(
             serverUrl = Config.SIGNALING_SERVER_URL,
             onMessageReceived = { message ->
@@ -207,6 +236,7 @@ class SkiffBackgroundService : Service() {
             onError = { error ->
                 serviceScope.launch(Dispatchers.Main) {
                     connectionStatus.value = "Connection Error"
+                    AppLogger.log("WebSocket connection failed: ${error.message}")
                 }
             }
         )
@@ -222,16 +252,20 @@ class SkiffBackgroundService : Service() {
     private fun startTcpServer() {
         serviceScope.launch(Dispatchers.IO) {
             try {
+                AppLogger.log("TCP Server: Binding server socket to port 8096...")
                 serverSocket = ServerSocket(8096).apply {
                     reuseAddress = true
                 }
+                AppLogger.log("TCP Server: Listening for incoming file streams on port 8096...")
                 while (isServiceRunning) {
                     val socket = serverSocket?.accept() ?: break
+                    AppLogger.log("TCP Server: Received connection request from ${socket.remoteSocketAddress}")
                     serviceScope.launch(Dispatchers.IO) {
                         handleIncomingTcpConnection(socket)
                     }
                 }
             } catch (e: Exception) {
+                AppLogger.log("TCP Server Bind Error: ${e.message}")
                 e.printStackTrace()
             }
         }
@@ -249,8 +283,12 @@ class SkiffBackgroundService : Service() {
                 if (b != '\r'.code) bos.write(b)
             }
             val header = bos.toString("UTF-8")
-            if (header.isEmpty()) return
+            if (header.isEmpty()) {
+                AppLogger.log("TCP Server: Header empty, closing connection")
+                return
+            }
 
+            AppLogger.log("TCP Server: Received header payload: $header")
             val parts = header.split("|")
             if (parts.size < 3) return
             val fileId = parts[0]
@@ -259,6 +297,7 @@ class SkiffBackgroundService : Service() {
 
             val record = db.transferDao().getTransferById(fileId)
             if (record != null) {
+                AppLogger.log("TCP Server: Streaming payload to storage: ${record.filePath}...")
                 val destinationFile = File(record.filePath)
                 destinationFile.parentFile?.mkdirs()
 
@@ -279,8 +318,12 @@ class SkiffBackgroundService : Service() {
                         )
                     }
                 }
+                AppLogger.log("TCP Server: File stream completed. Bytes written: $totalReceived")
+            } else {
+                AppLogger.log("TCP Server Error: File entity not found in database for ID: $fileId")
             }
         } catch (e: Exception) {
+            AppLogger.log("TCP Server Error: ${e.message}")
             e.printStackTrace()
         } finally {
             socket.close()
@@ -292,34 +335,42 @@ class SkiffBackgroundService : Service() {
             is WsMessage.Registered -> {
                 deviceCode.value = message.device_code
                 connectionStatus.value = "Registered & Waiting"
+                AppLogger.log("Device sharing code registered: ${message.device_code}")
                 updateNotification("Sharing Code: ${message.device_code}")
             }
             is WsMessage.IncomingRequest -> {
+                AppLogger.log("Received pairing request from device ID: ${message.sender_device_id}")
                 activeIncomingRequest.value = Pair(message.sender_device_id, message.sender_code)
             }
             is WsMessage.RequestAccepted -> {
                 activePeerDeviceId.value = message.receiver_device_id
                 connectionStatus.value = "Paired & Connected"
+                AppLogger.log("Pair request accepted by peer. Peer IP: ${message.receiver_endpoint}")
                 updateNotification("Connected to Peer")
                 peerIpAddress = message.receiver_endpoint
             }
             is WsMessage.RequestRejected -> {
                 connectionStatus.value = "Pairing Rejected"
+                AppLogger.log("Pairing request was rejected by peer.")
                 updateNotification("Pairing rejected")
             }
             is WsMessage.RelayedIceCandidate -> {
                 // Intercept shared local IP address payload
                 if (message.candidate.startsWith("LOCAL_IP:")) {
-                    peerIpAddress = message.candidate.substringAfter("LOCAL_IP:")
+                    val ip = message.candidate.substringAfter("LOCAL_IP:")
+                    peerIpAddress = ip
+                    AppLogger.log("Received and updated peer local IP address to: $ip")
                 }
             }
             is WsMessage.IncomingTransfer -> {
                 // Receiver side: insert file record as RECEIVE direction
+                AppLogger.log("Incoming file transfer session initiated. Files count: ${message.files.size}")
                 serviceScope.launch(Dispatchers.IO) {
                     val downloadsDir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
                         ?: filesDir
                     message.files.forEach { file ->
                         val localFile = File(downloadsDir, file.file_name)
+                        AppLogger.log("Saving file: ${file.file_name} -> ${localFile.absolutePath}")
                         val newRecord = TransferEntity(
                             fileId = file.file_id,
                             sessionId = message.session_id,

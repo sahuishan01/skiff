@@ -15,6 +15,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
@@ -238,6 +240,48 @@ class MainActivity : ComponentActivity() {
                         // Progress bars list items (rendered sequentially in same scrollable viewport)
                         items(transfers) { transfer ->
                             TransferProgressItem(transfer)
+                        }
+
+                        // Debug Logs Section
+                        item {
+                            var showLogs by remember { mutableStateOf(false) }
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(16.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text("Debug Logs (${AppLogger.logHistory.size})", fontWeight = FontWeight.Bold)
+                                        TextButton(onClick = { showLogs = !showLogs }) {
+                                            Text(if (showLogs) "Hide" else "Show")
+                                        }
+                                    }
+                                    if (showLogs) {
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(200.dp)
+                                                .verticalScroll(rememberScrollState()),
+                                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            AppLogger.logHistory.forEach { log ->
+                                                Text(
+                                                    text = log,
+                                                    fontSize = 10.sp,
+                                                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
 
