@@ -24,7 +24,7 @@ async fn main() {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    info!("Starting TransDecoder signaling server...");
+    info!("Starting Skiff signaling server...");
 
     let config = Config::from_env();
 

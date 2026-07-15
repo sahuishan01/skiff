@@ -75,7 +75,7 @@ class WebSocketClient(
         val request = Request.Builder().url(serverUrl).build()
         webSocket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                println("Connected to TransDecoder Signaling Server")
+                println("Connected to Skiff Signaling Server")
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
