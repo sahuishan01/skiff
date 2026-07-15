@@ -36,8 +36,8 @@ jobs:
       - name: Build Android App (Release APK)
         run: |
           cd trans_decoder_app
-          # Generate gradle wrapper dynamically inside CI environment
-          gradle wrapper
+          # Generate gradle wrapper dynamically inside CI environment, pinned to 8.4 for AGP 8.1.1 compatibility
+          gradle wrapper --gradle-version 8.4
           chmod +x gradlew
           ./gradlew assembleRelease
           
