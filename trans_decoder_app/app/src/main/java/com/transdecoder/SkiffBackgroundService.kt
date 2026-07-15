@@ -21,8 +21,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import java.io.File
 import java.io.RandomAccessFile
+import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.net.Socket
+import java.util.Collections
 import java.util.UUID
 
 class SkiffBackgroundService : Service() {
@@ -62,12 +64,37 @@ class SkiffBackgroundService : Service() {
             activePeerDeviceId.value = senderId
             connectionStatus.value = "Paired & Connected"
             webSocketClient?.sendMessage(WsMessage.AcceptRequest(senderId))
+
+            // Share local IP address with sender via IceCandidate payload
+            val localIp = getLocalIpAddress() ?: "127.0.0.1"
+            webSocketClient?.sendMessage(WsMessage.IceCandidate(senderId, "LOCAL_IP:$localIp"))
+
             activeIncomingRequest.value = null
         }
 
         fun rejectPairRequest(senderId: String) {
             webSocketClient?.sendMessage(WsMessage.RejectRequest(senderId))
             activeIncomingRequest.value = null
+        }
+
+        // Fetch local Wi-Fi / Ethernet interface IPv4 address
+        fun getLocalIpAddress(): String? {
+            try {
+                val interfaces = Collections.list(NetworkInterface.getNetworkInterfaces())
+                for (intf in interfaces) {
+                    val addrs = Collections.list(intf.inetAddresses)
+                    for (addr in addrs) {
+                        if (!addr.isLoopbackAddress) {
+                            val sAddr = addr.hostAddress
+                            val isIPv4 = sAddr.indexOf(':') < 0
+                            if (isIPv4) return sAddr
+                        }
+                    }
+                }
+            } catch (ex: Exception) {
+                ex.printStackTrace()
+            }
+            return null
         }
 
         // Send file data using TCP socket client connection
@@ -79,8 +106,8 @@ class SkiffBackgroundService : Service() {
             CoroutineScope(Dispatchers.IO).launch {
                 var socket: Socket? = null
                 try {
-                    // Small delay to let the receiver start its server
-                    kotlinx.coroutines.delay(800)
+                    // Delay to let the receiver start its server
+                    kotlinx.coroutines.delay(1000)
                     socket = Socket(targetIp, 8096)
                     val output = socket.getOutputStream()
                     val writer = java.io.PrintWriter(output, true)
@@ -255,6 +282,12 @@ class SkiffBackgroundService : Service() {
             is WsMessage.RequestRejected -> {
                 connectionStatus.value = "Pairing Rejected"
                 updateNotification("Pairing rejected")
+            }
+            is WsMessage.RelayedIceCandidate -> {
+                // Intercept shared local IP address payload
+                if (message.candidate.startsWith("LOCAL_IP:")) {
+                    peerIpAddress = message.candidate.substringAfter("LOCAL_IP:")
+                }
             }
             is WsMessage.IncomingTransfer -> {
                 // Receiver side: insert file record as RECEIVE direction

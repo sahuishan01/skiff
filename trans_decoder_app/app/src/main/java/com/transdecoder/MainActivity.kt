@@ -99,135 +99,145 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    Column(
+                    // Unified root LazyColumn to support dynamic scrolling in landscape orientation
+                    LazyColumn(
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
                         // Title Bar
-                        Text(
-                            text = "⛵ Skiff P2P Share",
-                            fontSize = 24.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.fillMaxWidth(),
-                            textAlign = TextAlign.Center,
-                            color = MaterialTheme.colorScheme.primary
-                        )
+                        item {
+                            Text(
+                                text = "⛵ Skiff P2P Share",
+                                fontSize = 24.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                                textAlign = TextAlign.Center,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
 
                         // Pairing Code Card
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(16.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                        item {
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(12.dp)
                             ) {
-                                Text("Your Device Sharing Code", fontSize = 14.sp, color = Color.Gray)
-                                Text(
-                                    text = deviceCode,
-                                    fontSize = 32.sp,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    letterSpacing = 2.sp,
-                                    color = MaterialTheme.colorScheme.secondary
-                                )
-                                Text("Share this code with other devices to pair", fontSize = 12.sp, color = Color.LightGray)
+                                Column(
+                                    modifier = Modifier.padding(16.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Text("Your Device Sharing Code", fontSize = 14.sp, color = Color.Gray)
+                                    Text(
+                                        text = deviceCode,
+                                        fontSize = 32.sp,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        letterSpacing = 2.sp,
+                                        color = MaterialTheme.colorScheme.secondary
+                                    )
+                                    Text("Share this code with other devices to pair", fontSize = 12.sp, color = Color.LightGray)
+                                }
                             }
                         }
 
                         // Connection Status Card
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .padding(16.dp)
-                                    .fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
+                        item {
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(12.dp)
                             ) {
-                                Column {
-                                    Text("Connection Status", fontSize = 12.sp, color = Color.Gray)
-                                    Text(
-                                        text = connectionStatus,
-                                        fontSize = 16.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = when (connectionStatus) {
-                                            "Paired & Connected" -> Color.Green
-                                            "Connecting..." -> Color.Yellow
-                                            else -> Color.Red
-                                        }
-                                    )
-                                }
-                                Button(onClick = {
-                                    SkiffBackgroundService.reconnect(this@MainActivity)
-                                }) {
-                                    Icon(Icons.Default.Refresh, contentDescription = "Reconnect")
+                                Row(
+                                    modifier = Modifier
+                                        .padding(16.dp)
+                                        .fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column {
+                                        Text("Connection Status", fontSize = 12.sp, color = Color.Gray)
+                                        Text(
+                                            text = connectionStatus,
+                                            fontSize = 16.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = when (connectionStatus) {
+                                                "Paired & Connected" -> Color.Green
+                                                "Connecting..." -> Color.Yellow
+                                                else -> Color.Red
+                                            }
+                                        )
+                                    }
+                                    Button(onClick = {
+                                        SkiffBackgroundService.reconnect(this@MainActivity)
+                                    }) {
+                                        Icon(Icons.Default.Refresh, contentDescription = "Reconnect")
+                                    }
                                 }
                             }
                         }
 
                         // Peer Pairing Input Card
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(16.dp),
-                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                        item {
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(12.dp)
                             ) {
-                                Text("Connect to Peer Device", fontWeight = FontWeight.Bold)
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    verticalAlignment = Alignment.CenterVertically
+                                Column(
+                                    modifier = Modifier.padding(16.dp),
+                                    verticalArrangement = Arrangement.spacedBy(12.dp)
                                 ) {
-                                    OutlinedTextField(
-                                        value = peerCodeInput.value,
-                                        onValueChange = { peerCodeInput.value = it.uppercase() },
-                                        label = { Text("6-Digit Code") },
-                                        modifier = Modifier.weight(1f),
-                                        singleLine = true
-                                    )
-                                    Button(
-                                        onClick = {
-                                            if (peerCodeInput.value.length == 6) {
-                                                SkiffBackgroundService.sendPairRequest(peerCodeInput.value)
-                                            } else {
-                                                Toast.makeText(this@MainActivity, "Enter valid 6-char code", Toast.LENGTH_SHORT).show()
-                                            }
-                                        },
-                                        modifier = Modifier.height(56.dp)
+                                    Text("Connect to Peer Device", fontWeight = FontWeight.Bold)
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Text("Pair")
+                                        OutlinedTextField(
+                                            value = peerCodeInput.value,
+                                            onValueChange = { peerCodeInput.value = it.uppercase() },
+                                            label = { Text("6-Digit Code") },
+                                            modifier = Modifier.weight(1f),
+                                            singleLine = true
+                                        )
+                                        Button(
+                                            onClick = {
+                                                if (peerCodeInput.value.length == 6) {
+                                                    SkiffBackgroundService.sendPairRequest(peerCodeInput.value)
+                                                } else {
+                                                    Toast.makeText(this@MainActivity, "Enter valid 6-char code", Toast.LENGTH_SHORT).show()
+                                                }
+                                            },
+                                            modifier = Modifier.height(56.dp)
+                                        ) {
+                                            Text("Pair")
+                                        }
                                     }
                                 }
                             }
                         }
 
                         // Send Files Button (Enabled only when paired)
-                        Button(
-                            onClick = { filePickerLauncher.launch("*/*") },
-                            enabled = activePeerDeviceId != null,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(50.dp)
-                        ) {
-                            Text("Select & Send Files", fontSize = 16.sp)
+                        item {
+                            Button(
+                                onClick = { filePickerLauncher.launch("*/*") },
+                                enabled = activePeerDeviceId != null,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(50.dp)
+                            ) {
+                                Text("Select & Send Files", fontSize = 16.sp)
+                            }
                         }
 
-                        // Progress bars list
-                        Text("Transfers List", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                        LazyColumn(
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            items(transfers) { transfer ->
-                                TransferProgressItem(transfer)
-                            }
+                        // Progress bars list header
+                        item {
+                            Text("Transfers List", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        }
+
+                        // Progress bars list items (rendered sequentially in same scrollable viewport)
+                        items(transfers) { transfer ->
+                            TransferProgressItem(transfer)
                         }
                     }
 
