@@ -60,7 +60,51 @@ sealed class WsMessage {
         val sender_device_id: String,
         val candidate: String
     ) : WsMessage()
+
+    @Serializable
+    @SerialName("INITIATE_TRANSFER")
+    data class InitiateTransfer(
+        val session_id: String,
+        val receiver_device_id: String,
+        val files: List<FileMetadataInput>
+    ) : WsMessage()
+
+    @Serializable
+    @SerialName("UPDATE_PROGRESS")
+    data class UpdateProgress(
+        val file_id: String,
+        val bytes_transferred: Long,
+        val status: String // "pending", "transferring", "completed", "failed", "paused"
+    ) : WsMessage()
+
+    @Serializable
+    @SerialName("TRANSFER_INITIATED")
+    data class TransferInitiated(val session_id: String) : WsMessage()
+
+    @Serializable
+    @SerialName("INCOMING_TRANSFER")
+    data class IncomingTransfer(
+        val session_id: String,
+        val sender_device_id: String,
+        val files: List<FileMetadataInput>
+    ) : WsMessage()
+
+    @Serializable
+    @SerialName("PROGRESS_UPDATED")
+    data class ProgressUpdated(
+        val file_id: String,
+        val bytes_transferred: Long
+    ) : WsMessage()
 }
+
+@Serializable
+data class FileMetadataInput(
+    val file_id: String,
+    val file_name: String,
+    val file_path: String,
+    val file_size: Long,
+    val file_hash: String
+)
 
 class WebSocketClient(
     private val serverUrl: String,

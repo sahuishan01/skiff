@@ -1,21 +1,24 @@
 package com.transdecoder
 
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -26,93 +29,68 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.transdecoder.data.local.AppDatabase
+import com.transdecoder.data.local.TransferDirection
 import com.transdecoder.data.local.TransferEntity
 import com.transdecoder.data.local.TransferStatus
-import com.transdecoder.data.local.TransferDirection
-import com.transdecoder.data.network.WebSocketClient
+import com.transdecoder.data.network.FileMetadataInput
 import com.transdecoder.data.network.WsMessage
-import com.transdecoder.domain.HolePuncher
-import com.transdecoder.domain.TransferManager
 import com.transdecoder.ui.theme.SkiffTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import java.io.File
 import java.util.UUID
 
 class MainActivity : ComponentActivity() {
 
     private lateinit var db: AppDatabase
-    private var webSocketClient: WebSocketClient? = null
-    private lateinit var transferManager: TransferManager
-    
-    // Local unique device ID
-    private val deviceId by lazy {
-        val prefs = getSharedPreferences("skiff_prefs", MODE_PRIVATE)
-        var id = prefs.getString("device_id", null)
-        if (id == null) {
-            id = UUID.randomUUID().toString()
-            prefs.edit().putString("device_id", id).apply()
-        }
-        id!!
-    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
         db = AppDatabase.getDatabase(this)
-        transferManager = TransferManager(db.transferDao())
 
-        // App States
-        val deviceCode = mutableStateOf("Registering...")
-        val connectionStatus = mutableStateOf("Disconnected")
-        val peerCodeInput = mutableStateOf("")
-        val activeIncomingRequest = mutableStateOf<Pair<String, String>?>(null) // Pair(SenderID, SenderCode)
-        val activePeerDeviceId = mutableStateOf<String?>(null)
-
-        // Initialize WebSocket Client
-        webSocketClient = WebSocketClient(
-            serverUrl = Config.SIGNALING_SERVER_URL,
-            onMessageReceived = { message ->
-                lifecycleScope.launch(Dispatchers.Main) {
-                    handleSignalingMessage(
-                        message,
-                        deviceCode,
-                        connectionStatus,
-                        activeIncomingRequest,
-                        activePeerDeviceId
-                    )
-                }
-            },
-            onError = { error ->
-                lifecycleScope.launch(Dispatchers.Main) {
-                    connectionStatus.value = "Connection Error"
-                    Toast.makeText(this@MainActivity, "WS Error: ${error.message}", Toast.LENGTH_SHORT).show()
+        // Request POST_NOTIFICATIONS runtime permission on Android 13+ (needed for Foreground Service status)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val requestPermissionLauncher = registerForActivityResult(
+                ActivityResultContracts.RequestPermission()
+            ) { isGranted: Boolean ->
+                if (!isGranted) {
+                    Toast.makeText(this, "Notification permission is required for background sync", Toast.LENGTH_LONG).show()
                 }
             }
-        )
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                requestPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
 
-        // Connect to server
-        webSocketClient?.connect()
-
-        // Trigger registration once socket connects
-        lifecycleScope.launch {
-            // Short delay to wait for WS open
-            kotlinx.coroutines.delay(1000)
-            webSocketClient?.sendMessage(WsMessage.Register(deviceId))
+        // Start Foreground Background Service
+        val serviceIntent = Intent(this, SkiffBackgroundService::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(serviceIntent)
+        } else {
+            startService(serviceIntent)
         }
 
         setContent {
             SkiffTheme {
+                // Collect states from the persistent background service
+                val deviceCode by SkiffBackgroundService.deviceCode.collectAsState()
+                val connectionStatus by SkiffBackgroundService.connectionStatus.collectAsState()
+                val activeIncomingRequest by SkiffBackgroundService.activeIncomingRequest.collectAsState()
+                val activePeerDeviceId by SkiffBackgroundService.activePeerDeviceId.collectAsState()
+
+                val peerCodeInput = remember { mutableStateOf("") }
                 val transfers by db.transferDao().getAllTransfersFlow().collectAsState(initial = emptyList())
 
                 // File picker launcher
                 val filePickerLauncher = rememberLauncherForActivityResult(
                     contract = ActivityResultContracts.GetMultipleContents()
                 ) { uris: List<Uri> ->
-                    if (uris.isNotEmpty() && activePeerDeviceId.value != null) {
-                        sendFiles(uris, activePeerDeviceId.value!!, transfers.firstOrNull()?.sessionId ?: UUID.randomUUID().toString())
+                    val peerId = activePeerDeviceId
+                    if (uris.isNotEmpty() && peerId != null) {
+                        sendFiles(uris, peerId, transfers.firstOrNull()?.sessionId ?: UUID.randomUUID().toString())
                     }
                 }
 
@@ -148,7 +126,7 @@ class MainActivity : ComponentActivity() {
                             ) {
                                 Text("Your Device Sharing Code", fontSize = 14.sp, color = Color.Gray)
                                 Text(
-                                    text = deviceCode.value,
+                                    text = deviceCode,
                                     fontSize = 32.sp,
                                     fontWeight = FontWeight.ExtraBold,
                                     letterSpacing = 2.sp,
@@ -173,10 +151,10 @@ class MainActivity : ComponentActivity() {
                                 Column {
                                     Text("Connection Status", fontSize = 12.sp, color = Color.Gray)
                                     Text(
-                                        text = connectionStatus.value,
+                                        text = connectionStatus,
                                         fontSize = 16.sp,
                                         fontWeight = FontWeight.Bold,
-                                        color = when (connectionStatus.value) {
+                                        color = when (connectionStatus) {
                                             "Paired & Connected" -> Color.Green
                                             "Connecting..." -> Color.Yellow
                                             else -> Color.Red
@@ -184,13 +162,7 @@ class MainActivity : ComponentActivity() {
                                     )
                                 }
                                 Button(onClick = {
-                                    connectionStatus.value = "Connecting..."
-                                    webSocketClient?.disconnect()
-                                    webSocketClient?.connect()
-                                    lifecycleScope.launch {
-                                        kotlinx.coroutines.delay(1000)
-                                        webSocketClient?.sendMessage(WsMessage.Register(deviceId))
-                                    }
+                                    SkiffBackgroundService.reconnect(this@MainActivity)
                                 }) {
                                     Icon(Icons.Default.Refresh, contentDescription = "Reconnect")
                                 }
@@ -222,10 +194,7 @@ class MainActivity : ComponentActivity() {
                                     Button(
                                         onClick = {
                                             if (peerCodeInput.value.length == 6) {
-                                                connectionStatus.value = "Connecting to ${peerCodeInput.value}..."
-                                                webSocketClient?.sendMessage(
-                                                    WsMessage.RequestConnection(peerCodeInput.value)
-                                                )
+                                                SkiffBackgroundService.sendPairRequest(peerCodeInput.value)
                                             } else {
                                                 Toast.makeText(this@MainActivity, "Enter valid 6-char code", Toast.LENGTH_SHORT).show()
                                             }
@@ -241,7 +210,7 @@ class MainActivity : ComponentActivity() {
                         // Send Files Button (Enabled only when paired)
                         Button(
                             onClick = { filePickerLauncher.launch("*/*") },
-                            enabled = activePeerDeviceId.value != null,
+                            enabled = activePeerDeviceId != null,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(50.dp)
@@ -261,26 +230,22 @@ class MainActivity : ComponentActivity() {
                         }
                     }
 
-                    // Dialog for incoming requests
-                    activeIncomingRequest.value?.let { request ->
+                    // Dialog for incoming pairing request
+                    activeIncomingRequest?.let { request ->
                         AlertDialog(
                             onDismissRequest = { /* Force action */ },
                             title = { Text("Connection Request") },
                             text = { Text("Incoming connection request from code ${request.second}. Do you want to pair?") },
                             confirmButton = {
                                 Button(onClick = {
-                                    activePeerDeviceId.value = request.first
-                                    connectionStatus.value = "Paired & Connected"
-                                    webSocketClient?.sendMessage(WsMessage.AcceptRequest(request.first))
-                                    activeIncomingRequest.value = null
+                                    SkiffBackgroundService.acceptPairRequest(request.first)
                                 }) {
                                     Text("Accept")
                                 }
                             },
                             dismissButton = {
                                 TextButton(onClick = {
-                                    webSocketClient?.sendMessage(WsMessage.RejectRequest(request.first))
-                                    activeIncomingRequest.value = null
+                                    SkiffBackgroundService.rejectPairRequest(request.first)
                                 }) {
                                     Text("Reject")
                                 }
@@ -292,59 +257,21 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun handleSignalingMessage(
-        message: WsMessage,
-        deviceCode: MutableState<String>,
-        connectionStatus: MutableState<String>,
-        activeIncomingRequest: MutableState<Pair<String, String>?>,
-        activePeerDeviceId: MutableState<String?>
-    ) {
-        when (message) {
-            is WsMessage.Registered -> {
-                deviceCode.value = message.device_code
-                connectionStatus.value = "Registered & Waiting"
-            }
-            is WsMessage.IncomingRequest -> {
-                activeIncomingRequest.value = Pair(message.sender_device_id, message.sender_code)
-            }
-            is WsMessage.RequestAccepted -> {
-                activePeerDeviceId.value = message.receiver_device_id
-                connectionStatus.value = "Paired & Connected"
-                Toast.makeText(this, "Successfully paired with peer!", Toast.LENGTH_SHORT).show()
-                
-                // Initialize UDP socket hole punching in background
-                lifecycleScope.launch(Dispatchers.IO) {
-                    val holePuncher = HolePuncher()
-                    val success = holePuncher.punchHole(message.receiver_endpoint ?: "", 8095)
-                    lifecycleScope.launch(Dispatchers.Main) {
-                        if (success) {
-                            Toast.makeText(this@MainActivity, "Direct connection established!", Toast.LENGTH_SHORT).show()
-                        } else {
-                            Toast.makeText(this@MainActivity, "NAT traversal failed, using relay mode.", Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                }
-            }
-            is WsMessage.RequestRejected -> {
-                connectionStatus.value = "Pairing Rejected"
-                Toast.makeText(this, "Pairing failed: ${message.reason}", Toast.LENGTH_LONG).show()
-            }
-            else -> {}
-        }
-    }
-
     private fun sendFiles(uris: List<Uri>, peerId: String, sessionId: String) {
         lifecycleScope.launch(Dispatchers.IO) {
-            uris.forEach { uri ->
+            val fileList = uris.map { uri ->
                 val name = uri.lastPathSegment ?: "file"
-                // Extract file parameters and launch transfer mock
+                val fileId = UUID.randomUUID().toString()
+                val fileHash = UUID.randomUUID().toString()
+                val fileSize = 100 * 1024 * 1024L // Mock 100MB file size limit
+                
                 val newFile = TransferEntity(
-                    fileId = UUID.randomUUID().toString(),
+                    fileId = fileId,
                     sessionId = sessionId,
                     fileName = name,
                     filePath = uri.toString(),
-                    fileSize = 100 * 1024 * 1024L, // Mock 100MB file size limit
-                    fileHash = UUID.randomUUID().toString(),
+                    fileSize = fileSize,
+                    fileHash = fileHash,
                     bytesTransferred = 0L,
                     status = TransferStatus.PENDING,
                     direction = TransferDirection.SEND,
@@ -352,25 +279,48 @@ class MainActivity : ComponentActivity() {
                 )
                 db.transferDao().insertTransfer(newFile)
                 
-                // Simulate P2P transfer progress updates
+                FileMetadataInput(
+                    file_id = fileId,
+                    file_name = name,
+                    file_path = uri.toString(),
+                    file_size = fileSize,
+                    file_hash = fileHash
+                )
+            }
+            
+            // 1. Notify the receiver peer over WS signaling channel that files are incoming
+            SkiffBackgroundService.webSocketClient?.sendMessage(
+                WsMessage.InitiateTransfer(
+                    session_id = sessionId,
+                    receiver_device_id = peerId,
+                    files = fileList
+                )
+            )
+
+            // 2. Simulate progressive updates and update DB & WS
+            fileList.forEach { file ->
                 launch {
                     var sent = 0L
-                    while (sent < newFile.fileSize) {
+                    while (sent < file.file_size) {
                         kotlinx.coroutines.delay(100)
                         sent += 1024 * 1024 * 2 // Send 2MB chunks
-                        if (sent > newFile.fileSize) sent = newFile.fileSize
+                        if (sent > file.file_size) sent = file.file_size
                         
-                        db.transferDao().updateProgress(newFile.fileId, sent, TransferStatus.TRANSFERRING)
+                        db.transferDao().updateProgress(file.file_id, sent, TransferStatus.TRANSFERRING)
+                        
+                        // Send progress update to server, which will automatically relay to receiver
+                        SkiffBackgroundService.webSocketClient?.sendMessage(
+                            WsMessage.UpdateProgress(
+                                file_id = file.file_id,
+                                bytes_transferred = sent,
+                                status = if (sent == file.file_size) "completed" else "transferring"
+                            )
+                        )
                     }
-                    db.transferDao().updateProgress(newFile.fileId, newFile.fileSize, TransferStatus.COMPLETED)
+                    db.transferDao().updateProgress(file.file_id, file.file_size, TransferStatus.COMPLETED)
                 }
             }
         }
-    }
-
-    override fun onDestroy() {
-        webSocketClient?.disconnect()
-        super.onDestroy()
     }
 }
 

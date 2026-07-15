@@ -247,7 +247,7 @@ async fn handle_socket(
 
                 // Insert files
                 let mut db_error = false;
-                for file in files {
+                for file in &files {
                     let file_res = sqlx::query!(
                         "INSERT INTO transfer_files (file_id, session_id, file_name, file_path, file_size, file_hash, bytes_transferred, status)
                          VALUES ($1, $2, $3, $4, $5, $6, 0, 'pending') ON CONFLICT DO NOTHING",
@@ -274,6 +274,17 @@ async fn handle_socket(
                     });
                 } else {
                     let _ = tx.send(WsMessage::TransferInitiated { session_id });
+                    // Relay transfer details to the receiver so they are notified of the incoming files
+                    signaling
+                        .send_to_device(
+                            &receiver_device_id,
+                            WsMessage::IncomingTransfer {
+                                session_id,
+                                sender_device_id: sender_id.clone(),
+                                files: files.clone(),
+                            },
+                        )
+                        .await;
                 }
             }
 
@@ -299,6 +310,34 @@ async fn handle_socket(
                             file_id,
                             bytes_transferred,
                         });
+
+                        // Relay progress update to the peer device in real-time
+                        let session_query = sqlx::query!(
+                            "SELECT sender_device_id, receiver_device_id FROM transfer_sessions s
+                             JOIN transfer_files f ON s.session_id = f.session_id
+                             WHERE f.file_id = $1 LIMIT 1",
+                            file_id
+                        )
+                        .fetch_one(&pool)
+                        .await;
+
+                        if let Ok(session) = session_query {
+                            let peer_id = if Some(&session.sender_device_id) == client_device_id.as_ref() {
+                                session.receiver_device_id
+                            } else {
+                                session.sender_device_id
+                            };
+                            
+                            signaling
+                                .send_to_device(
+                                    &peer_id,
+                                    WsMessage::ProgressUpdated {
+                                        file_id,
+                                        bytes_transferred,
+                                    },
+                                )
+                                .await;
+                        }
                     }
                     Err(e) => {
                         error!("Failed to update file progress in DB: {}", e);

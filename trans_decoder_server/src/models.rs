@@ -114,6 +114,11 @@ pub enum WsMessage {
     TransferInitiated {
         session_id: Uuid,
     },
+    IncomingTransfer {
+        session_id: Uuid,
+        sender_device_id: String,
+        files: Vec<FileMetadataInput>,
+    },
     ProgressUpdated {
         file_id: Uuid,
         bytes_transferred: i64,
