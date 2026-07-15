@@ -1,0 +1,73 @@
+name: Build & Verify Skiff
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+
+jobs:
+  build-rust-server:
+    name: Build Rust Server
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo Dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            trans_decoder_server/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('trans_decoder_server/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Run Cargo Check
+        run: |
+          cd trans_decoder_server
+          cargo check
+
+      - name: Build Release Binary
+        run: |
+          cd trans_decoder_server
+          cargo build --release
+
+  build-kotlin-app:
+    name: Build Kotlin App
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Cache Gradle Dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Build Android App (Debug)
+        run: |
+          cd trans_decoder_app
+          # Check if gradlew exists before running to make the CI robust while the project is being set up
+          if [ -f "./gradlew" ]; then
+            chmod +x gradlew
+            ./gradlew assembleDebug
+          else
+            echo "No Gradle wrapper found in trans_decoder_app yet. Skipping build step."
+          fi
