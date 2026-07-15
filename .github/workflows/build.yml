@@ -46,8 +46,8 @@ jobs:
         run: |
           git config user.name "Skiff Developer"
           git config user.email "developer@skiff.p2p"
-          # Create and force-push to a debug branch
-          git checkout -b ci-debug
+          # Create and force-push to a debug branch (force recreate if exists)
+          git checkout -B ci-debug
           cp build.log ci_build_error.log || true
           git add ci_build_error.log
           git commit -m "Upload failed build logs for debug"
