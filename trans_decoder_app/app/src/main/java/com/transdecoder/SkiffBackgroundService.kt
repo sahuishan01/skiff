@@ -301,11 +301,11 @@ class SkiffBackgroundService : Service() {
                 val destinationFile = File(record.filePath)
                 destinationFile.parentFile?.mkdirs()
 
+                var totalReceived = startOffset
                 RandomAccessFile(destinationFile, "rw").use { raf ->
                     raf.seek(startOffset)
                     val buffer = ByteArray(64 * 1024)
                     var bytesRead: Int
-                    var totalReceived = startOffset
 
                     while (input.read(buffer).also { bytesRead = it } != -1) {
                         raf.write(buffer, 0, bytesRead)
