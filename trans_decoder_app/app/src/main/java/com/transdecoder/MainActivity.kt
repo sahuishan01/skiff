@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.OpenableColumns
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -257,20 +258,40 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun getUriMetadata(uri: Uri): Pair<String, Long> {
+        var name = "file"
+        var size = 0L
+        try {
+            contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
+                if (cursor.moveToFirst()) {
+                    if (nameIndex != -1) name = cursor.getString(nameIndex)
+                    if (sizeIndex != -1) size = cursor.getLong(sizeIndex)
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        if (name == "file") {
+            name = uri.lastPathSegment ?: "file"
+        }
+        return Pair(name, size)
+    }
+
     private fun sendFiles(uris: List<Uri>, peerId: String, sessionId: String) {
         lifecycleScope.launch(Dispatchers.IO) {
             val fileList = uris.map { uri ->
-                val name = uri.lastPathSegment ?: "file"
+                val (name, size) = getUriMetadata(uri)
                 val fileId = UUID.randomUUID().toString()
                 val fileHash = UUID.randomUUID().toString()
-                val fileSize = 100 * 1024 * 1024L // Mock 100MB file size limit
                 
                 val newFile = TransferEntity(
                     fileId = fileId,
                     sessionId = sessionId,
                     fileName = name,
                     filePath = uri.toString(),
-                    fileSize = fileSize,
+                    fileSize = size,
                     fileHash = fileHash,
                     bytesTransferred = 0L,
                     status = TransferStatus.PENDING,
@@ -283,7 +304,7 @@ class MainActivity : ComponentActivity() {
                     file_id = fileId,
                     file_name = name,
                     file_path = uri.toString(),
-                    file_size = fileSize,
+                    file_size = size,
                     file_hash = fileHash
                 )
             }
@@ -297,28 +318,9 @@ class MainActivity : ComponentActivity() {
                 )
             )
 
-            // 2. Simulate progressive updates and update DB & WS
-            fileList.forEach { file ->
-                launch {
-                    var sent = 0L
-                    while (sent < file.file_size) {
-                        kotlinx.coroutines.delay(100)
-                        sent += 1024 * 1024 * 2 // Send 2MB chunks
-                        if (sent > file.file_size) sent = file.file_size
-                        
-                        db.transferDao().updateProgress(file.file_id, sent, TransferStatus.TRANSFERRING)
-                        
-                        // Send progress update to server, which will automatically relay to receiver
-                        SkiffBackgroundService.webSocketClient?.sendMessage(
-                            WsMessage.UpdateProgress(
-                                file_id = file.file_id,
-                                bytes_transferred = sent,
-                                status = if (sent == file.file_size) "completed" else "transferring"
-                            )
-                        )
-                    }
-                    db.transferDao().updateProgress(file.file_id, file.file_size, TransferStatus.COMPLETED)
-                }
+            // 2. Start streaming each file over TCP socket
+            fileList.zip(uris).forEach { (file, uri) ->
+                SkiffBackgroundService.sendFileTcp(this@MainActivity, file.file_id, uri)
             }
         }
     }

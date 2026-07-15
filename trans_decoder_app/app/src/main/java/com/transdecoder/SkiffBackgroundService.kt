@@ -3,7 +3,9 @@ package com.transdecoder
 import android.app.*
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
+import android.os.Environment
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import com.transdecoder.data.local.AppDatabase
@@ -17,6 +19,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
+import java.io.File
+import java.io.RandomAccessFile
+import java.net.ServerSocket
+import java.net.Socket
 import java.util.UUID
 
 class SkiffBackgroundService : Service() {
@@ -33,6 +39,7 @@ class SkiffBackgroundService : Service() {
 
         var webSocketClient: WebSocketClient? = null
         var isServiceRunning = false
+        var peerIpAddress: String? = null
 
         fun reconnect(context: Context) {
             connectionStatus.value = "Connecting..."
@@ -62,10 +69,68 @@ class SkiffBackgroundService : Service() {
             webSocketClient?.sendMessage(WsMessage.RejectRequest(senderId))
             activeIncomingRequest.value = null
         }
+
+        // Send file data using TCP socket client connection
+        fun sendFileTcp(context: Context, fileId: String, uri: Uri) {
+            val targetIp = peerIpAddress ?: "127.0.0.1" // Fallback to localhost if testing on same device
+            val dbInstance = AppDatabase.getDatabase(context)
+            val webSocket = webSocketClient
+
+            CoroutineScope(Dispatchers.IO).launch {
+                var socket: Socket? = null
+                try {
+                    // Small delay to let the receiver start its server
+                    kotlinx.coroutines.delay(800)
+                    socket = Socket(targetIp, 8096)
+                    val output = socket.getOutputStream()
+                    val writer = java.io.PrintWriter(output, true)
+
+                    val record = dbInstance.transferDao().getTransferById(fileId) ?: return@launch
+                    val startOffset = 0L
+
+                    // Send header info: "FILE_ID|FILE_HASH|START_OFFSET"
+                    writer.println("${record.fileId}|${record.fileHash}|$startOffset")
+
+                    // Stream file data from Android ContentResolver (SAF URI)
+                    context.contentResolver.openInputStream(uri)?.use { inputStream ->
+                        val buffer = ByteArray(64 * 1024) // 64KB buffer blocks
+                        var bytesRead: Int
+                        var totalSent = 0L
+
+                        while (inputStream.read(buffer).also { bytesRead = it } != -1) {
+                            output.write(buffer, 0, bytesRead)
+                            totalSent += bytesRead
+
+                            dbInstance.transferDao().updateProgress(
+                                fileId = fileId,
+                                bytesTransferred = totalSent,
+                                status = if (totalSent >= record.fileSize) TransferStatus.COMPLETED else TransferStatus.TRANSFERRING
+                            )
+
+                            // Update signaling server to relay progress to peer UI
+                            webSocket?.sendMessage(
+                                WsMessage.UpdateProgress(
+                                    file_id = fileId,
+                                    bytes_transferred = totalSent,
+                                    status = if (totalSent == record.fileSize) "completed" else "transferring"
+                                )
+                            )
+                        }
+                    }
+                    output.flush()
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    dbInstance.transferDao().updateProgress(fileId, 0L, TransferStatus.FAILED)
+                } finally {
+                    socket?.close()
+                }
+            }
+        }
     }
 
     private val serviceScope = CoroutineScope(Dispatchers.IO)
     private lateinit var db: AppDatabase
+    private var serverSocket: ServerSocket? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -75,6 +140,7 @@ class SkiffBackgroundService : Service() {
         isServiceRunning = true
 
         initializeWebSocket()
+        startTcpServer()
     }
 
     private fun initializeWebSocket() {
@@ -109,6 +175,67 @@ class SkiffBackgroundService : Service() {
         }
     }
 
+    // Start background TCP socket listener
+    private fun startTcpServer() {
+        serviceScope.launch(Dispatchers.IO) {
+            try {
+                serverSocket = ServerSocket(8096).apply {
+                    reuseAddress = true
+                }
+                while (isServiceRunning) {
+                    val socket = serverSocket?.accept() ?: break
+                    serviceScope.launch(Dispatchers.IO) {
+                        handleIncomingTcpConnection(socket)
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    private fun handleIncomingTcpConnection(socket: Socket) {
+        try {
+            val input = socket.getInputStream()
+            val reader = java.io.BufferedReader(java.io.InputStreamReader(input))
+
+            val header = reader.readLine() ?: return
+            val parts = header.split("|")
+            if (parts.size < 3) return
+            val fileId = parts[0]
+            val fileHash = parts[1]
+            val startOffset = parts[2].toLong()
+
+            val record = db.transferDao().getTransferById(fileId)
+            if (record != null) {
+                val destinationFile = File(record.filePath)
+                destinationFile.parentFile?.mkdirs()
+
+                RandomAccessFile(destinationFile, "rw").use { raf ->
+                    raf.seek(startOffset)
+                    val buffer = ByteArray(64 * 1024)
+                    var bytesRead: Int
+                    var totalReceived = startOffset
+
+                    while (input.read(buffer).also { bytesRead = it } != -1) {
+                        raf.write(buffer, 0, bytesRead)
+                        totalReceived += bytesRead
+
+                        db.transferDao().updateProgress(
+                            fileId = fileId,
+                            bytesTransferred = totalReceived,
+                            status = if (totalReceived >= record.fileSize) TransferStatus.COMPLETED else TransferStatus.TRANSFERRING
+                        )
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        } finally {
+            socket.close()
+        }
+    }
+
     private fun handleMessage(message: WsMessage) {
         when (message) {
             is WsMessage.Registered -> {
@@ -123,6 +250,7 @@ class SkiffBackgroundService : Service() {
                 activePeerDeviceId.value = message.receiver_device_id
                 connectionStatus.value = "Paired & Connected"
                 updateNotification("Connected to Peer")
+                peerIpAddress = message.receiver_endpoint
             }
             is WsMessage.RequestRejected -> {
                 connectionStatus.value = "Pairing Rejected"
@@ -131,16 +259,19 @@ class SkiffBackgroundService : Service() {
             is WsMessage.IncomingTransfer -> {
                 // Receiver side: insert file record as RECEIVE direction
                 serviceScope.launch(Dispatchers.IO) {
+                    val downloadsDir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+                        ?: filesDir
                     message.files.forEach { file ->
+                        val localFile = File(downloadsDir, file.file_name)
                         val newRecord = TransferEntity(
                             fileId = file.file_id,
                             sessionId = message.session_id,
                             fileName = file.file_name,
-                            filePath = file.file_path,
+                            filePath = localFile.absolutePath,
                             fileSize = file.file_size,
                             fileHash = file.file_hash,
                             bytesTransferred = 0L,
-                            status = TransferStatus.TRANSFERRING,
+                            status = TransferStatus.PENDING,
                             direction = TransferDirection.RECEIVE,
                             peerDeviceId = message.sender_device_id
                         )
@@ -207,6 +338,8 @@ class SkiffBackgroundService : Service() {
     override fun onDestroy() {
         webSocketClient?.disconnect()
         webSocketClient = null
+        serverSocket?.close()
+        serverSocket = null
         isServiceRunning = false
         super.onDestroy()
     }
