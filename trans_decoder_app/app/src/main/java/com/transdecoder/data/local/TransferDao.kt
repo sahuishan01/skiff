@@ -21,7 +21,11 @@ interface TransferDao {
     suspend fun updateTransfer(transfer: TransferEntity)
 
     @Query("UPDATE transfers SET bytesTransferred = :bytesTransferred, status = :status, updatedAt = :updatedAt WHERE fileId = :fileId")
-    suspend fun updateProgress(fileId: String, bytesTransferred: Long, status: TransferStatus, updatedAt: Long = System.currentTimeMillis())
+    suspend fun updateProgressInternal(fileId: String, bytesTransferred: Long, status: TransferStatus, updatedAt: Long)
+
+    suspend fun updateProgress(fileId: String, bytesTransferred: Long, status: TransferStatus) {
+        updateProgressInternal(fileId, bytesTransferred, status, System.currentTimeMillis())
+    }
 
     @Query("DELETE FROM transfers WHERE fileId = :fileId")
     suspend fun deleteTransfer(fileId: String)
