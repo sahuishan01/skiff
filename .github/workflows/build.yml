@@ -34,11 +34,24 @@ jobs:
           # Generate gradle wrapper dynamically using Gradle 8.4
           gradle wrapper
           chmod +x gradlew
-          ./gradlew assembleRelease
+          # Capture output to log file to allow remote debugging on failure
+          ./gradlew assembleRelease > ../build.log 2>&1
           
           # Find compiled release APK and place it in the target release directory
           mkdir -p app/build/outputs/apk/release
           find app/build/outputs/apk/ -name "*.apk" -exec cp {} app/build/outputs/apk/release/app-release.apk \;
+
+      - name: Push Build Log on Failure
+        if: failure()
+        run: |
+          git config user.name "Skiff Developer"
+          git config user.email "developer@skiff.p2p"
+          # Create and force-push to a debug branch
+          git checkout -b ci-debug
+          cp build.log ci_build_error.log || true
+          git add ci_build_error.log
+          git commit -m "Upload failed build logs for debug"
+          git push -f origin ci-debug
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
