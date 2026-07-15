@@ -48,8 +48,8 @@ class SkiffBackgroundService : Service() {
             connectionStatus.value = "Connecting..."
             val service = instance
             if (service != null) {
-                service.webSocketClient?.disconnect()
-                service.webSocketClient = null
+                webSocketClient?.disconnect()
+                webSocketClient = null
                 service.initializeWebSocket()
             } else {
                 val intent = Intent(context, SkiffBackgroundService::class.java)
