@@ -13,8 +13,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowDownward
-import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
@@ -30,6 +30,7 @@ import androidx.lifecycle.lifecycleScope
 import com.transdecoder.data.local.AppDatabase
 import com.transdecoder.data.local.TransferEntity
 import com.transdecoder.data.local.TransferStatus
+import com.transdecoder.data.local.TransferDirection
 import com.transdecoder.data.network.WebSocketClient
 import com.transdecoder.data.network.WsMessage
 import com.transdecoder.domain.HolePuncher
@@ -328,9 +329,6 @@ class MainActivity : ComponentActivity() {
                 connectionStatus.value = "Pairing Rejected"
                 Toast.makeText(this, "Pairing failed: ${message.reason}", Toast.LENGTH_LONG).show()
             }
-            is WsMessage.Error -> {
-                Toast.makeText(this, "Server Error: ${message.message}", Toast.LENGTH_LONG).show()
-            }
             else -> {}
         }
     }
@@ -392,7 +390,7 @@ fun TransferProgressItem(transfer: TransferEntity) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Icon(
-                imageVector = if (transfer.direction == TransferDirection.SEND) Icons.Default.ArrowUpward else Icons.Default.ArrowDownward,
+                imageVector = if (transfer.direction == TransferDirection.SEND) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
                 contentDescription = "Direction",
                 tint = if (transfer.direction == TransferDirection.SEND) Color.Cyan else Color.Magenta
             )
