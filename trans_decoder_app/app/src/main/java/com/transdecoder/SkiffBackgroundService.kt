@@ -139,7 +139,7 @@ class SkiffBackgroundService : Service() {
                                 WsMessage.UpdateProgress(
                                     file_id = fileId,
                                     bytes_transferred = totalSent,
-                                    status = if (totalSent == record.fileSize) "completed" else "transferring"
+                                    status = if (totalSent == record.fileSize) "Completed" else "Transferring"
                                 )
                             )
                         }
