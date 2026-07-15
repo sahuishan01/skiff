@@ -23,21 +23,16 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Cache Gradle Dependencies
-        uses: actions/cache@v3
+      - name: Setup Gradle 8.4
+        uses: gradle/actions/setup-gradle@v3
         with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
+          gradle-version: '8.4'
 
       - name: Build Android App (Release APK)
         run: |
           cd trans_decoder_app
-          # Generate gradle wrapper dynamically inside CI environment, pinned to 8.4 for AGP 8.1.1 compatibility
-          gradle wrapper --gradle-version 8.4
+          # Generate gradle wrapper dynamically using Gradle 8.4
+          gradle wrapper
           chmod +x gradlew
           ./gradlew assembleRelease
           
