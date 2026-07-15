@@ -194,7 +194,7 @@ class SkiffBackgroundService : Service() {
         }
     }
 
-    private fun handleIncomingTcpConnection(socket: Socket) {
+    private suspend fun handleIncomingTcpConnection(socket: Socket) {
         try {
             val input = socket.getInputStream()
             val reader = java.io.BufferedReader(java.io.InputStreamReader(input))
