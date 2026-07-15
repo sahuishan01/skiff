@@ -163,7 +163,15 @@ class SkiffBackgroundService : Service() {
         super.onCreate()
         db = AppDatabase.getDatabase(this)
         createNotificationChannel()
-        startForeground(NOTIFICATION_ID, buildNotification("Skiff P2P is active"))
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(
+                NOTIFICATION_ID,
+                buildNotification("Skiff P2P is active"),
+                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, buildNotification("Skiff P2P is active"))
+        }
         isServiceRunning = true
 
         initializeWebSocket()
