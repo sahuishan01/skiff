@@ -111,7 +111,9 @@ class WebSocketClient(
     private val onMessageReceived: (WsMessage) -> Unit,
     private val onError: (Throwable) -> Unit
 ) {
-    private val client = OkHttpClient()
+    private val client = OkHttpClient.Builder()
+        .pingInterval(15, java.util.concurrent.TimeUnit.SECONDS)
+        .build()
     private var webSocket: WebSocket? = null
     private val json = Json { ignoreUnknownKeys = true }
 

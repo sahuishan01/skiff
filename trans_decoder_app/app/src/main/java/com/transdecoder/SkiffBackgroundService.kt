@@ -156,26 +156,31 @@ class SkiffBackgroundService : Service() {
                         val buffer = ByteArray(64 * 1024)
                         var bytesRead: Int
                         var totalSent = 0L
+                        var lastUpdateMs = System.currentTimeMillis()
 
                         while (inputStream.read(buffer).also { bytesRead = it } != -1) {
                             output.write(buffer, 0, bytesRead)
                             totalSent += bytesRead
 
-                            dbInstance.transferDao().updateProgress(
-                                fileId = fileId,
-                                direction = TransferDirection.SEND,
-                                bytesTransferred = totalSent,
-                                status = if (totalSent >= record.fileSize) TransferStatus.COMPLETED else TransferStatus.TRANSFERRING
-                            )
-
-                            // Update signaling server to relay progress to peer UI
-                            webSocket?.sendMessage(
-                                WsMessage.UpdateProgress(
-                                    file_id = fileId,
-                                    bytes_transferred = totalSent,
-                                    status = if (totalSent == record.fileSize) "Completed" else "Transferring"
+                            val now = System.currentTimeMillis()
+                            if (now - lastUpdateMs > 500 || totalSent >= record.fileSize) {
+                                lastUpdateMs = now
+                                dbInstance.transferDao().updateProgress(
+                                    fileId = fileId,
+                                    direction = TransferDirection.SEND,
+                                    bytesTransferred = totalSent,
+                                    status = if (totalSent >= record.fileSize) TransferStatus.COMPLETED else TransferStatus.TRANSFERRING
                                 )
-                            )
+
+                                // Update signaling server to relay progress to peer UI
+                                webSocket?.sendMessage(
+                                    WsMessage.UpdateProgress(
+                                        file_id = fileId,
+                                        bytes_transferred = totalSent,
+                                        status = if (totalSent == record.fileSize) "Completed" else "Transferring"
+                                    )
+                                )
+                            }
                         }
                     }
                     output.flush()
@@ -322,17 +327,22 @@ class SkiffBackgroundService : Service() {
                     raf.seek(startOffset)
                     val buffer = ByteArray(64 * 1024)
                     var bytesRead: Int
+                    var lastUpdateMs = System.currentTimeMillis()
 
                     while (input.read(buffer).also { bytesRead = it } != -1) {
                         raf.write(buffer, 0, bytesRead)
                         totalReceived += bytesRead
 
-                        db.transferDao().updateProgress(
-                            fileId = fileId,
-                            direction = TransferDirection.RECEIVE,
-                            bytesTransferred = totalReceived,
-                            status = if (totalReceived >= record.fileSize) TransferStatus.COMPLETED else TransferStatus.TRANSFERRING
-                        )
+                        val now = System.currentTimeMillis()
+                        if (now - lastUpdateMs > 500 || totalReceived >= record.fileSize) {
+                            lastUpdateMs = now
+                            db.transferDao().updateProgress(
+                                fileId = fileId,
+                                direction = TransferDirection.RECEIVE,
+                                bytesTransferred = totalReceived,
+                                status = if (totalReceived >= record.fileSize) TransferStatus.COMPLETED else TransferStatus.TRANSFERRING
+                            )
+                        }
                     }
                 }
                 AppLogger.log("TCP Server: File stream completed. Bytes written: $totalReceived")
