@@ -393,24 +393,30 @@ class SkiffBackgroundService : Service() {
                 // Receiver side: insert file record as RECEIVE direction
                 AppLogger.log("Incoming file transfer session initiated. Files count: ${message.files.size}")
                 serviceScope.launch(Dispatchers.IO) {
-                    val downloadsDir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
-                        ?: filesDir
-                    message.files.forEach { file ->
-                        val localFile = File(downloadsDir, file.file_name)
-                        AppLogger.log("Saving file: ${file.file_name} -> ${localFile.absolutePath}")
-                        val newRecord = TransferEntity(
-                            fileId = file.file_id,
-                            sessionId = message.session_id,
-                            fileName = file.file_name,
-                            filePath = localFile.absolutePath,
-                            fileSize = file.file_size,
-                            fileHash = file.file_hash,
-                            bytesTransferred = 0L,
-                            status = TransferStatus.PENDING,
-                            direction = TransferDirection.RECEIVE,
-                            peerDeviceId = message.sender_device_id
-                        )
-                        db.transferDao().insertTransfer(newRecord)
+                    try {
+                        val downloadsDir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+                            ?: filesDir
+                        message.files.forEach { file ->
+                            val localFile = File(downloadsDir, file.file_name)
+                            AppLogger.log("Saving file: ${file.file_name} -> ${localFile.absolutePath}")
+                            val newRecord = TransferEntity(
+                                fileId = file.file_id,
+                                sessionId = message.session_id,
+                                fileName = file.file_name,
+                                filePath = localFile.absolutePath,
+                                fileSize = file.file_size,
+                                fileHash = file.file_hash,
+                                bytesTransferred = 0L,
+                                status = TransferStatus.PENDING,
+                                direction = TransferDirection.RECEIVE,
+                                peerDeviceId = message.sender_device_id
+                            )
+                            db.transferDao().insertTransfer(newRecord)
+                        }
+                        AppLogger.log("Receiver DB: Successfully saved incoming transfer records")
+                    } catch (e: Exception) {
+                        AppLogger.log("Receiver DB Save Error: ${e.message}")
+                        e.printStackTrace()
                     }
                 }
             }
