@@ -8,6 +8,9 @@ interface TransferDao {
     @Query("SELECT * FROM transfers ORDER BY updatedAt DESC")
     fun getAllTransfersFlow(): Flow<List<TransferEntity>>
 
+    @Query("SELECT * FROM transfers")
+    suspend fun getAllTransfersList(): List<TransferEntity>
+
     @Query("SELECT * FROM transfers WHERE fileId = :fileId AND direction = :direction LIMIT 1")
     suspend fun getTransferByIdAndDirection(fileId: String, direction: TransferDirection): TransferEntity?
 

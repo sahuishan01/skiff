@@ -348,6 +348,15 @@ class SkiffBackgroundService : Service() {
                 AppLogger.log("TCP Server: File stream completed. Bytes written: $totalReceived")
             } else {
                 AppLogger.log("TCP Server Error: File entity not found in database for ID: $fileId")
+                try {
+                    val list = db.transferDao().getAllTransfersList()
+                    AppLogger.log("Diagnostic DB Content: Total records = ${list.size}")
+                    list.forEach { item ->
+                        AppLogger.log(" - ID: ${item.fileId}, Dir: ${item.direction}, Status: ${item.status}")
+                    }
+                } catch (ex: Exception) {
+                    AppLogger.log("Failed to load diagnostic transfers: ${ex.message}")
+                }
             }
         } catch (e: Exception) {
             AppLogger.log("TCP Server Error: ${e.message}")
