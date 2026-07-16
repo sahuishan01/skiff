@@ -237,7 +237,17 @@ class SkiffBackgroundService : Service() {
             onError = { error ->
                 serviceScope.launch(Dispatchers.Main) {
                     connectionStatus.value = "Connection Error"
-                    AppLogger.log("WebSocket connection failed: ${error.message}")
+                    AppLogger.log("WebSocket connection failed: ${error.message}. Retrying in 5 seconds...")
+                    
+                    serviceScope.launch {
+                        kotlinx.coroutines.delay(5000)
+                        if (isServiceRunning && connectionStatus.value == "Connection Error") {
+                            AppLogger.log("Retrying WebSocket connection...")
+                            webSocketClient?.disconnect()
+                            webSocketClient = null
+                            initializeWebSocket()
+                        }
+                    }
                 }
             }
         )
