@@ -137,6 +137,7 @@ class WebSocketClient(
 
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
                 webSocket.close(1000, null)
+                onError(java.lang.Exception("Connection closed by server: $reason"))
             }
         })
     }
