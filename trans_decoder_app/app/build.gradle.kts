@@ -13,8 +13,8 @@ android {
         applicationId = "com.transdecoder"
         minSdk = 24
         targetSdk = 34
-        versionCode = 19
-        versionName = "0.0.19"
+        versionCode = 20
+        versionName = "0.0.20"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
