@@ -335,46 +335,51 @@ class MainActivity : ComponentActivity() {
 
     private fun sendFiles(uris: List<Uri>, peerId: String, sessionId: String) {
         lifecycleScope.launch(Dispatchers.IO) {
-            val fileList = uris.map { uri ->
-                val (name, size) = getUriMetadata(uri)
-                val fileId = UUID.randomUUID().toString()
-                val fileHash = UUID.randomUUID().toString()
+            try {
+                val fileList = uris.map { uri ->
+                    val (name, size) = getUriMetadata(uri)
+                    val fileId = UUID.randomUUID().toString()
+                    val fileHash = UUID.randomUUID().toString()
+                    
+                    val newFile = TransferEntity(
+                        fileId = fileId,
+                        sessionId = sessionId,
+                        fileName = name,
+                        filePath = uri.toString(),
+                        fileSize = size,
+                        fileHash = fileHash,
+                        bytesTransferred = 0L,
+                        status = TransferStatus.PENDING,
+                        direction = TransferDirection.SEND,
+                        peerDeviceId = peerId
+                    )
+                    db.transferDao().insertTransfer(newFile)
+                    
+                    FileMetadataInput(
+                        file_id = fileId,
+                        file_name = name,
+                        file_path = uri.toString(),
+                        file_size = size,
+                        file_hash = fileHash
+                    )
+                }
                 
-                val newFile = TransferEntity(
-                    fileId = fileId,
-                    sessionId = sessionId,
-                    fileName = name,
-                    filePath = uri.toString(),
-                    fileSize = size,
-                    fileHash = fileHash,
-                    bytesTransferred = 0L,
-                    status = TransferStatus.PENDING,
-                    direction = TransferDirection.SEND,
-                    peerDeviceId = peerId
+                // 1. Notify the receiver peer over WS signaling channel that files are incoming
+                SkiffBackgroundService.webSocketClient?.sendMessage(
+                    WsMessage.InitiateTransfer(
+                        session_id = sessionId,
+                        receiver_device_id = peerId,
+                        files = fileList
+                    )
                 )
-                db.transferDao().insertTransfer(newFile)
-                
-                FileMetadataInput(
-                    file_id = fileId,
-                    file_name = name,
-                    file_path = uri.toString(),
-                    file_size = size,
-                    file_hash = fileHash
-                )
-            }
-            
-            // 1. Notify the receiver peer over WS signaling channel that files are incoming
-            SkiffBackgroundService.webSocketClient?.sendMessage(
-                WsMessage.InitiateTransfer(
-                    session_id = sessionId,
-                    receiver_device_id = peerId,
-                    files = fileList
-                )
-            )
 
-            // 2. Start streaming each file over TCP socket
-            fileList.zip(uris).forEach { (file, uri) ->
-                SkiffBackgroundService.sendFileTcp(this@MainActivity, file.file_id, uri)
+                // 2. Start streaming each file over TCP socket
+                fileList.zip(uris).forEach { (file, uri) ->
+                    SkiffBackgroundService.sendFileTcp(this@MainActivity, file.file_id, uri)
+                }
+            } catch (e: Exception) {
+                AppLogger.log("Sender: Failed to initiate transfer: ${e.message}")
+                e.printStackTrace()
             }
         }
     }

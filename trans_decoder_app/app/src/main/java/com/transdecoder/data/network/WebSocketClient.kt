@@ -144,9 +144,11 @@ class WebSocketClient(
         })
     }
 
-    fun sendMessage(message: WsMessage) {
+    fun sendMessage(message: WsMessage): Boolean {
         val jsonText = json.encodeToString(message)
-        webSocket?.send(jsonText)
+        val sent = webSocket?.send(jsonText) ?: false
+        android.util.Log.d("SkiffWS", "Sent message (${message::class.simpleName}): $sent")
+        return sent
     }
 
     fun disconnect() {
