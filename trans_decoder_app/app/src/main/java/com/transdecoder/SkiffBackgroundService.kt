@@ -213,7 +213,7 @@ class SkiffBackgroundService : Service() {
 
                 val requestBody = object : okhttp3.RequestBody() {
                     override fun contentType(): okhttp3.MediaType? {
-                        return okhttp3.MediaType.parse("application/octet-stream")
+                        return okhttp3.MediaType.Companion.parse("application/octet-stream")
                     }
 
                     override fun writeTo(sink: okio.BufferedSink) {
@@ -296,7 +296,7 @@ class SkiffBackgroundService : Service() {
                             return@launch
                         }
 
-                        val body = response.body() ?: run {
+                        val body = response.body ?: run {
                             AppLogger.log("Relay: Download response body is null for file $fileId")
                             dbInstance.transferDao().updateProgress(fileId, TransferDirection.RECEIVE, 0L, TransferStatus.FAILED)
                             return@launch
