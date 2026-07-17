@@ -4,12 +4,22 @@ use tokio::sync::{mpsc, RwLock};
 use tracing::{info, warn};
 use crate::models::WsMessage;
 
+use axum::body::Bytes;
+
+#[derive(Clone)]
+pub struct RelaySession {
+    pub tx: mpsc::Sender<Result<Bytes, axum::Error>>,
+    pub rx: Arc<tokio::sync::Mutex<Option<mpsc::Receiver<Result<Bytes, axum::Error>>>>>,
+}
+
 #[derive(Default, Clone)]
 pub struct SignalingState {
     // Maps device_id -> Tx channel of the WebSocket task
     pub active_connections: Arc<RwLock<HashMap<String, mpsc::UnboundedSender<WsMessage>>>>,
     // Maps device_code -> device_id
     pub code_mappings: Arc<RwLock<HashMap<String, String>>>,
+    // Maps file_id -> RelaySession
+    pub relay_sessions: Arc<RwLock<HashMap<String, RelaySession>>>,
 }
 
 impl SignalingState {
