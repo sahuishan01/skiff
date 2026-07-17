@@ -6,7 +6,7 @@ mod signaling;
 
 use std::net::SocketAddr;
 use axum::{
-    routing::get,
+    routing::{get, post},
     Router,
 };
 use config::Config;
@@ -52,6 +52,8 @@ async fn main() {
         .route("/health", get(handlers::api::health_check))
         .route("/ws", get(handlers::ws::ws_handler))
         .route("/api/transfers/:session_id", get(handlers::api::get_transfer_status))
+        .route("/api/relay/upload/:file_id", post(handlers::api::relay_upload))
+        .route("/api/relay/download/:file_id", get(handlers::api::relay_download))
         .layer(cors)
         .layer(TraceLayer::new_for_http())
         .with_state(app_state);

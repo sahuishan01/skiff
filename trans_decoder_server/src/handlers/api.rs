@@ -3,14 +3,33 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
     Json,
+    body::Body,
 };
 use sqlx::PgPool;
 use uuid::Uuid;
 use serde_json::json;
-use tracing::error;
+use tracing::{error, info};
+use tokio::sync::mpsc;
+use std::sync::Arc;
+use futures_util::StreamExt;
+use futures_util::Stream;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
 use crate::models::SessionStatus;
-use crate::signaling::SignalingState;
+use crate::signaling::{SignalingState, RelaySession};
+
+pub struct RelayStream {
+    pub rx: mpsc::Receiver<Result<axum::body::Bytes, axum::Error>>,
+}
+
+impl Stream for RelayStream {
+    type Item = Result<axum::body::Bytes, axum::Error>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.get_mut().rx.poll_recv(cx)
+    }
+}
 
 pub async fn health_check() -> impl IntoResponse {
     (StatusCode::OK, "OK")
@@ -69,6 +88,91 @@ pub async fn get_transfer_status(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({ "error": "Internal database error" })),
             )
+        }
+    }
+}
+
+pub async fn relay_upload(
+    Path(file_id): Path<String>,
+    State((_, signaling)): State<(PgPool, SignalingState)>,
+    body: Body,
+) -> impl IntoResponse {
+    info!("Relay Upload: Initiated for file {}", file_id);
+    let tx = {
+        let mut sessions = signaling.relay_sessions.write().await;
+        if let Some(session) = sessions.get(&file_id) {
+            session.tx.clone()
+        } else {
+            let (tx, rx) = mpsc::channel(16);
+            let session = RelaySession {
+                tx: tx.clone(),
+                rx: Arc::new(tokio::sync::Mutex::new(Some(rx))),
+            };
+            sessions.insert(file_id.clone(), session);
+            tx
+        }
+    };
+
+    let mut stream = body.into_data_stream();
+    while let Some(chunk_res) = stream.next().await {
+        match chunk_res {
+            Ok(bytes) => {
+                if tx.send(Ok(bytes)).await.is_err() {
+                    error!("Relay Upload: Receiver disconnected for file {}", file_id);
+                    break;
+                }
+            }
+            Err(e) => {
+                error!("Relay Upload: Error reading body for file {}: {}", file_id, e);
+                let _ = tx.send(Err(e)).await;
+                break;
+            }
+        }
+    }
+
+    info!("Relay Upload: Completed/terminated for file {}", file_id);
+    let mut sessions = signaling.relay_sessions.write().await;
+    sessions.remove(&file_id);
+
+    StatusCode::OK
+}
+
+pub async fn relay_download(
+    Path(file_id): Path<String>,
+    State((_, signaling)): State<(PgPool, SignalingState)>,
+) -> impl IntoResponse {
+    info!("Relay Download: Initiated for file {}", file_id);
+    let rx_opt = {
+        let mut sessions = signaling.relay_sessions.write().await;
+        if let Some(session) = sessions.get(&file_id) {
+            let mut rx_lock = session.rx.lock().await;
+            rx_lock.take()
+        } else {
+            let (tx, rx) = mpsc::channel(16);
+            let session = RelaySession {
+                tx,
+                rx: Arc::new(tokio::sync::Mutex::new(None)),
+            };
+            sessions.insert(file_id.clone(), session);
+            Some(rx)
+        }
+    };
+
+    match rx_opt {
+        Some(rx) => {
+            let stream = RelayStream { rx };
+            info!("Relay Download: Starting stream response for file {}", file_id);
+            axum::response::Response::builder()
+                .header("content-type", "application/octet-stream")
+                .body(Body::from_stream(stream))
+                .unwrap()
+        }
+        None => {
+            error!("Relay Download: Conflict/Already occupied for file {}", file_id);
+            axum::response::Response::builder()
+                .status(StatusCode::CONFLICT)
+                .body(Body::from("Download channel already occupied or invalid"))
+                .unwrap()
         }
     }
 }

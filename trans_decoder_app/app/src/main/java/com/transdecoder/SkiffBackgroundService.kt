@@ -135,15 +135,16 @@ class SkiffBackgroundService : Service() {
             val webSocket = webSocketClient
 
             CoroutineScope(Dispatchers.IO).launch {
+                val record = dbInstance.transferDao().getTransferByIdAndDirection(fileId, TransferDirection.SEND) ?: return@launch
                 var socket: Socket? = null
                 try {
                     // Delay to let the receiver start its server
                     kotlinx.coroutines.delay(1000)
-                    socket = Socket(targetIp, 8096)
+                    socket = Socket()
+                    socket.connect(java.net.InetSocketAddress(targetIp, 8096), 3000) // 3 seconds timeout
                     AppLogger.log("TCP Client: Connected successfully to receiver at $targetIp:8096")
                     val output = socket.getOutputStream()
 
-                    val record = dbInstance.transferDao().getTransferByIdAndDirection(fileId, TransferDirection.SEND) ?: return@launch
                     val startOffset = 0L
 
                     // Send header info: "FILE_ID|FILE_HASH|START_OFFSET"
@@ -186,11 +187,155 @@ class SkiffBackgroundService : Service() {
                     output.flush()
                     AppLogger.log("TCP Client: Completed streaming bytes: ${record.fileSize}")
                 } catch (e: Exception) {
-                    AppLogger.log("TCP Client Error: ${e.message}")
-                    e.printStackTrace()
-                    dbInstance.transferDao().updateProgress(fileId, TransferDirection.SEND, 0L, TransferStatus.FAILED)
+                    AppLogger.log("TCP Client Direct Connection Failed: ${e.message}. Falling back to HTTP Relay...")
+                    val peerId = record.peerDeviceId
+                    webSocket?.sendMessage(
+                        WsMessage.IceCandidate(
+                            target_device_id = peerId,
+                            candidate = "RELAY_FALLBACK:$fileId"
+                        )
+                    )
+                    uploadFileRelay(context, fileId, uri)
                 } finally {
                     socket?.close()
+                }
+            }
+        }
+
+        fun uploadFileRelay(context: Context, fileId: String, uri: Uri) {
+            val dbInstance = AppDatabase.getDatabase(context)
+            AppLogger.log("Relay: Initiating upload for file $fileId...")
+            val webSocket = webSocketClient
+
+            CoroutineScope(Dispatchers.IO).launch {
+                val record = dbInstance.transferDao().getTransferByIdAndDirection(fileId, TransferDirection.SEND) ?: return@launch
+                val url = "${Config.API_SERVER_URL}/api/relay/upload/$fileId"
+
+                val requestBody = object : okhttp3.RequestBody() {
+                    override fun contentType(): okhttp3.MediaType? {
+                        return okhttp3.MediaType.parse("application/octet-stream")
+                    }
+
+                    override fun writeTo(sink: okio.BufferedSink) {
+                        context.contentResolver.openInputStream(uri)?.use { inputStream ->
+                            val buffer = ByteArray(64 * 1024)
+                            var bytesRead: Int
+                            var totalSent = 0L
+                            var lastUpdateMs = System.currentTimeMillis()
+
+                            while (inputStream.read(buffer).also { bytesRead = it } != -1) {
+                                sink.write(buffer, 0, bytesRead)
+                                totalSent += bytesRead
+
+                                val now = System.currentTimeMillis()
+                                if (now - lastUpdateMs > 500 || totalSent >= record.fileSize) {
+                                    lastUpdateMs = now
+                                    CoroutineScope(Dispatchers.IO).launch {
+                                        dbInstance.transferDao().updateProgress(
+                                            fileId = fileId,
+                                            direction = TransferDirection.SEND,
+                                            bytesTransferred = totalSent,
+                                            status = if (totalSent >= record.fileSize) TransferStatus.COMPLETED else TransferStatus.TRANSFERRING
+                                        )
+                                    }
+                                    webSocket?.sendMessage(
+                                        WsMessage.UpdateProgress(
+                                            file_id = fileId,
+                                            bytes_transferred = totalSent,
+                                            status = if (totalSent == record.fileSize) "Completed" else "Transferring"
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                val request = okhttp3.Request.Builder()
+                    .url(url)
+                    .post(requestBody)
+                    .build()
+
+                val client = okhttp3.OkHttpClient()
+                try {
+                    client.newCall(request).execute().use { response ->
+                        if (response.isSuccessful) {
+                            AppLogger.log("Relay: Upload completed successfully for file $fileId")
+                        } else {
+                            AppLogger.log("Relay: Upload failed with status ${response.code} for file $fileId")
+                            dbInstance.transferDao().updateProgress(fileId, TransferDirection.SEND, 0L, TransferStatus.FAILED)
+                        }
+                    }
+                } catch (e: Exception) {
+                    AppLogger.log("Relay Upload Error: ${e.message}")
+                    e.printStackTrace()
+                    dbInstance.transferDao().updateProgress(fileId, TransferDirection.SEND, 0L, TransferStatus.FAILED)
+                }
+            }
+        }
+
+        fun downloadFileRelay(context: Context, fileId: String) {
+            val dbInstance = AppDatabase.getDatabase(context)
+            AppLogger.log("Relay: Initiating download for file $fileId...")
+
+            CoroutineScope(Dispatchers.IO).launch {
+                val record = dbInstance.transferDao().getTransferByIdAndDirection(fileId, TransferDirection.RECEIVE) ?: return@launch
+                val url = "${Config.API_SERVER_URL}/api/relay/download/$fileId"
+
+                val request = okhttp3.Request.Builder()
+                    .url(url)
+                    .get()
+                    .build()
+
+                val client = okhttp3.OkHttpClient()
+                try {
+                    client.newCall(request).execute().use { response ->
+                        if (!response.isSuccessful) {
+                            AppLogger.log("Relay: Download request failed with status ${response.code} for file $fileId")
+                            dbInstance.transferDao().updateProgress(fileId, TransferDirection.RECEIVE, 0L, TransferStatus.FAILED)
+                            return@launch
+                        }
+
+                        val body = response.body() ?: run {
+                            AppLogger.log("Relay: Download response body is null for file $fileId")
+                            dbInstance.transferDao().updateProgress(fileId, TransferDirection.RECEIVE, 0L, TransferStatus.FAILED)
+                            return@launch
+                        }
+
+                        val destinationFile = File(record.filePath)
+                        destinationFile.parentFile?.mkdirs()
+
+                        body.byteStream().use { inputStream ->
+                            RandomAccessFile(destinationFile, "rw").use { raf ->
+                                raf.seek(0)
+                                val buffer = ByteArray(64 * 1024)
+                                var bytesRead: Int
+                                var totalReceived = 0L
+                                var lastUpdateMs = System.currentTimeMillis()
+
+                                while (inputStream.read(buffer).also { bytesRead = it } != -1) {
+                                    raf.write(buffer, 0, bytesRead)
+                                    totalReceived += bytesRead
+
+                                    val now = System.currentTimeMillis()
+                                    if (now - lastUpdateMs > 500 || totalReceived >= record.fileSize) {
+                                        lastUpdateMs = now
+                                        dbInstance.transferDao().updateProgress(
+                                            fileId = fileId,
+                                            direction = TransferDirection.RECEIVE,
+                                            bytesTransferred = totalReceived,
+                                            status = if (totalReceived >= record.fileSize) TransferStatus.COMPLETED else TransferStatus.TRANSFERRING
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        AppLogger.log("Relay: Download completed. Bytes written: ${destinationFile.length()} for file $fileId")
+                    }
+                } catch (e: Exception) {
+                    AppLogger.log("Relay Download Error: ${e.message}")
+                    e.printStackTrace()
+                    dbInstance.transferDao().updateProgress(fileId, TransferDirection.RECEIVE, 0L, TransferStatus.FAILED)
                 }
             }
         }
@@ -396,6 +541,10 @@ class SkiffBackgroundService : Service() {
                     val ip = message.candidate.substringAfter("LOCAL_IP:")
                     peerIpAddress = ip
                     AppLogger.log("Received and updated peer local IP address to: $ip")
+                } else if (message.candidate.startsWith("RELAY_FALLBACK:")) {
+                    val fileId = message.candidate.substringAfter("RELAY_FALLBACK:")
+                    AppLogger.log("Relay: Received fallback trigger for file $fileId")
+                    downloadFileRelay(this@SkiffBackgroundService, fileId)
                 }
             }
             is WsMessage.IncomingTransfer -> {
