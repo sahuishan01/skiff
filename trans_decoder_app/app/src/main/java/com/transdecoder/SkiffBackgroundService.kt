@@ -16,6 +16,7 @@ import com.transdecoder.data.local.TransferDirection
 import com.transdecoder.data.network.WebSocketClient
 import com.transdecoder.data.network.WsMessage
 import com.transdecoder.data.network.FileMetadataInput
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -213,7 +214,7 @@ class SkiffBackgroundService : Service() {
 
                 val requestBody = object : okhttp3.RequestBody() {
                     override fun contentType(): okhttp3.MediaType? {
-                        return okhttp3.MediaType.Companion.parse("application/octet-stream")
+                        return "application/octet-stream".toMediaTypeOrNull()
                     }
 
                     override fun writeTo(sink: okio.BufferedSink) {
