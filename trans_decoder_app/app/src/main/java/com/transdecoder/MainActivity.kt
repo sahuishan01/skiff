@@ -25,6 +25,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Menu
@@ -549,6 +550,7 @@ private fun PeersSection(
     if (peers.isEmpty()) return
 
     var renameTarget by remember { mutableStateOf<KnownPeer?>(null) }
+    val renameScope = rememberCoroutineScope()
 
     Column(
         modifier = Modifier
@@ -655,7 +657,7 @@ private fun PeersSection(
                             val db = AppDatabase.getDatabase(
                                 SkiffBackgroundService.instance?.applicationContext ?: return@Button
                             )
-                            CoroutineScope(Dispatchers.IO).launch {
+                            renameScope.launch {
                                 db.knownPeerDao().upsertPeer(peer.copy(displayName = newName.trim()))
                             }
                         }
