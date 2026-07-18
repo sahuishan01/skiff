@@ -8,7 +8,7 @@ use axum::body::Bytes;
 
 #[derive(Clone)]
 pub struct RelaySession {
-    pub tx: mpsc::Sender<Result<Bytes, axum::Error>>,
+    pub tx: Option<mpsc::Sender<Result<Bytes, axum::Error>>>,
     pub rx: Arc<tokio::sync::Mutex<Option<mpsc::Receiver<Result<Bytes, axum::Error>>>>>,
 }
 
