@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Checkup Report — Skiff Android UI</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #121618;
+      color: #E8EAEB;
+      line-height: 1.6;
+      padding: 32px 16px;
+    }
+    .container { max-width: 720px; margin: 0 auto; }
+    h1 { font-size: 24px; font-weight: 700; margin-bottom: 4px; color: #40C4B8; }
+    .meta { font-size: 14px; color: #8F9498; margin-bottom: 32px; }
+    .score-badge {
+      display: inline-block;
+      background: #0D3D38;
+      color: #6FEDE4;
+      font-size: 32px;
+      font-weight: 700;
+      padding: 4px 16px;
+      border-radius: 8px;
+      margin-bottom: 32px;
+    }
+    .score-badge span { font-size: 16px; font-weight: 400; opacity: 0.7; }
+
+    table { width: 100%; border-collapse: collapse; margin-bottom: 32px; }
+    th { text-align: left; padding: 8px 12px; font-size: 12px; font-weight: 600; color: #5C6166; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid #2E3236; }
+    td { padding: 12px; border-bottom: 1px solid #2E3236; font-size: 14px; vertical-align: top; }
+    td:first-child { font-weight: 600; color: #E8EAEB; }
+    td:nth-child(2) { font-weight: 700; text-align: center; width: 40px; }
+    .healthy { color: #81C784; }
+    .watch { color: #FFB74D; }
+    .critical { color: #E57373; }
+
+    .section { margin-bottom: 32px; }
+    .section h2 {
+      font-size: 18px;
+      font-weight: 700;
+      margin-bottom: 12px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #2E3236;
+    }
+    .critical h2 { color: #E57373; }
+    .watch h2 { color: #FFB74D; }
+
+    .issue { margin-bottom: 20px; }
+    .issue h3 { font-size: 15px; font-weight: 600; margin-bottom: 4px; color: #E8EAEB; }
+    .issue .tag {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 4px;
+      margin-bottom: 6px;
+    }
+    .tag.critical { background: rgba(229, 115, 115, 0.15); color: #E57373; }
+    .tag.watch { background: rgba(255, 183, 77, 0.15); color: #FFB74D; }
+
+    .issue p { font-size: 14px; color: #8F9498; margin-bottom: 6px; }
+    .issue .rx {
+      font-size: 13px;
+      color: #40C4B8;
+      border-left: 2px solid #40C4B8;
+      padding-left: 12px;
+      margin-top: 6px;
+    }
+    .issue .rx strong { color: #E8EAEB; }
+
+    .next { margin-top: 32px; }
+    .next h2 { font-size: 18px; font-weight: 700; margin-bottom: 12px; color: #40C4B8; }
+    .next ol { padding-left: 20px; }
+    .next li { font-size: 14px; color: #8F9498; margin-bottom: 6px; }
+    .next li strong { color: #E8EAEB; }
+
+    .verdict { background: #1A1D20; border-radius: 10px; padding: 16px; margin-bottom: 32px; }
+    .verdict h2 { font-size: 16px; font-weight: 700; margin-bottom: 8px; color: #81C784; }
+    .verdict p { font-size: 14px; color: #8F9498; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Checkup Report</h1>
+    <div class="meta">Skiff Android UI &mdash; 18 July 2026 &mdash; MainActivity.kt + Theme.kt</div>
+    <div class="score-badge">43 <span>/ 60</span></div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Vital</th>
+          <th>Score</th>
+          <th>Status</th>
+          <th>Evidence</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Intentionality</td>
+          <td>8</td>
+          <td><span class="healthy">Healthy</span></td>
+          <td>Deliberate dark-teal palette, authored type scale, purposeful composition shift from card-list to hero+timeline. Icons are generic system defaults.</td>
+        </tr>
+        <tr>
+          <td>Readability</td>
+          <td>10</td>
+          <td><span class="healthy">Healthy</span></td>
+          <td>15:1 text contrast, 36sp monospace pairing code with 6sp letter-spacing, body at 14sp correct for mobile.</td>
+        </tr>
+        <tr>
+          <td>Usability</td>
+          <td>7</td>
+          <td><span class="watch">Watch</span></td>
+          <td>Primary flow intact. Save location buried in Settings dialog behind hamburger icon — discoverability risk.</td>
+        </tr>
+        <tr>
+          <td>Responsiveness</td>
+          <td>5</td>
+          <td><span class="critical">Critical</span></td>
+          <td>No tablet-aware layout. No landscape reflow. No max-width constraint. Same vertical stack at any aspect ratio.</td>
+        </tr>
+        <tr>
+          <td>Speed</td>
+          <td>7</td>
+          <td><span class="watch">Watch</span></td>
+          <td>LazyColumn and Room Flow efficient. Entire tree recomposes on every state emission — no per-composable isolation.</td>
+        </tr>
+        <tr>
+          <td>Accessibility</td>
+          <td>6</td>
+          <td><span class="watch">Watch</span></td>
+          <td>Good content descriptions. PairRequestDialog blocks back-button. No custom focus ring styling.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="section critical">
+      <h2>Critical Issues</h2>
+
+      <div class="issue">
+        <span class="tag critical">Responsiveness</span>
+        <h3>1. No tablet or landscape adaptation</h3>
+        <p>Single Column layout with no breakpoint awareness. On a 10-inch tablet the pairing code hero stretches absurdly wide. In landscape on a phone, hero + actions consume the full viewport, pushing transfers below the fold.</p>
+        <div class="rx"><strong>Prescription:</strong> Wrap in BoxWithConstraints. Reflow to side-by-side above 600dp width. Constrain content with <code>Modifier.widthIn(max = 480.dp)</code> on tablets.</div>
+      </div>
+    </div>
+
+    <div class="section watch">
+      <h2>Watch Issues</h2>
+
+      <div class="issue">
+        <span class="tag watch">Usability</span>
+        <h3>2. Save location discoverability</h3>
+        <p>The folder picker is only accessible through the Settings dialog. First-time receivers have no prompt or indication of where files are saved.</p>
+        <div class="rx"><strong>Rx:</strong> Add a one-time banner on first file received, or surface a compact indicator in the transfer area.</div>
+      </div>
+
+      <div class="issue">
+        <span class="tag watch">Speed</span>
+        <h3>3. Recomposure scope</h3>
+        <p>State flows collected at the <code>setContent</code> boundary — the entire composable tree recomposes on every <code>bytesTransferred</code> update.</p>
+        <div class="rx"><strong>Rx:</strong> Extract TransferTimelineItem with <code>derivedStateOf</code> for progress. Isolate the transfer list into its own composable.</div>
+      </div>
+
+      <div class="issue">
+        <span class="tag watch">Accessibility</span>
+        <h3>4. Dialog escape trap</h3>
+        <p>PairRequestDialog has <code>onDismissRequest = { }</code> — intentionally blocking, but it traps keyboard and switch-access users.</p>
+        <div class="rx"><strong>Rx:</strong> Add dismiss handler that rejects the request, or provide a "Not now" escape.</div>
+      </div>
+
+      <div class="issue">
+        <span class="tag watch">Accessibility</span>
+        <h3>5. No reduced-motion consideration</h3>
+        <p>Default Compose animations (ripple, dialog appear) fire regardless of system reduced-motion settings.</p>
+        <div class="rx"><strong>Rx:</strong> Gate animations behind system animation scale settings. Compose defaults handle this partially but explicit hardening would help.</div>
+      </div>
+    </div>
+
+    <div class="verdict">
+      <h2>Healthy Verdicts</h2>
+      <p><strong>Intentionality</strong> is strong — the warm-teal-on-charcoal palette, monospace pairing code hero, and flat timeline rows show authored choices rather than defaults. <strong>Readability</strong> exceeds WCAG AA across all text levels. The 36sp monospace pairing code with wide letter-spacing is optimized for the exact use case.</p>
+    </div>
+
+    <div class="next">
+      <h2>Next Actions by Impact</h2>
+      <ol>
+        <li><strong>Responsive pass</strong> — add tablet/landscape reflow and max-width constraint (<code>/design responsive</code>)</li>
+        <li><strong>Fix dialog trap</strong> — replace <code>onDismissRequest = { }</code> with actual dismiss handler</li>
+        <li><strong>Save location prompt</strong> — add one-time banner for first-time receivers</li>
+        <li><strong>Custom icons</strong> — source or create custom icon assets to replace generic Refresh/Menu</li>
+      </ol>
+    </div>
+  </div>
+</body>
+</html>
