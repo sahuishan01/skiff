@@ -274,7 +274,10 @@ class SkiffBackgroundService : Service() {
                     .post(requestBody)
                     .build()
 
-                val client = okhttp3.OkHttpClient()
+                val client = okhttp3.OkHttpClient.Builder()
+                    .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+                    .writeTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+                    .build()
                 try {
                     client.newCall(request).execute().use { response ->
                         if (response.isSuccessful) {
@@ -324,7 +327,9 @@ class SkiffBackgroundService : Service() {
                     .get()
                     .build()
 
-                val client = okhttp3.OkHttpClient()
+                val client = okhttp3.OkHttpClient.Builder()
+                    .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+                    .build()
                 try {
                     client.newCall(request).execute().use { response ->
                         if (!response.isSuccessful) {

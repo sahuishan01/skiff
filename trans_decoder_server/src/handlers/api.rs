@@ -15,6 +15,7 @@ use futures_util::StreamExt;
 use futures_util::Stream;
 use std::pin::Pin;
 use std::task::{Context, Poll};
+use tokio::time::{sleep, Duration};
 
 use crate::models::SessionStatus;
 use crate::signaling::{SignalingState, RelaySession};
@@ -105,34 +106,51 @@ pub async fn relay_upload(
         } else {
             let (tx, rx) = mpsc::channel(16);
             let session = RelaySession {
-                tx: tx.clone(),
+                tx: Some(tx.clone()),
                 rx: Arc::new(tokio::sync::Mutex::new(Some(rx))),
             };
             sessions.insert(file_id.clone(), session);
-            tx
+            Some(tx)
         }
     };
 
     let mut stream = body.into_data_stream();
-    while let Some(chunk_res) = stream.next().await {
-        match chunk_res {
-            Ok(bytes) => {
-                if tx.send(Ok(bytes)).await.is_err() {
-                    error!("Relay Upload: Receiver disconnected for file {}", file_id);
+    if let Some(tx) = tx {
+        while let Some(chunk_res) = stream.next().await {
+            match chunk_res {
+                Ok(bytes) => {
+                    if tx.send(Ok(bytes)).await.is_err() {
+                        error!("Relay Upload: Receiver disconnected for file {}", file_id);
+                        break;
+                    }
+                }
+                Err(e) => {
+                    error!("Relay Upload: Error reading body for file {}: {}", file_id, e);
+                    let _ = tx.send(Err(e)).await;
                     break;
                 }
             }
-            Err(e) => {
-                error!("Relay Upload: Error reading body for file {}: {}", file_id, e);
-                let _ = tx.send(Err(e)).await;
-                break;
-            }
         }
+    } else {
+        error!("Relay Upload: No sender available for file {}", file_id);
     }
 
     info!("Relay Upload: Completed/terminated for file {}", file_id);
-    let mut sessions = signaling.relay_sessions.write().await;
-    sessions.remove(&file_id);
+    let sessions_weak = signaling.relay_sessions.clone();
+    // Drop the stored sender so the mpsc channel closes naturally.
+    {
+        let mut sessions = signaling.relay_sessions.write().await;
+        if let Some(session) = sessions.get_mut(&file_id) {
+            session.tx = None;
+        }
+    }
+    // Clean up the session after 60s so orphaned sessions don't leak
+    tokio::spawn(async move {
+        sleep(Duration::from_secs(60)).await;
+        let mut sessions = sessions_weak.write().await;
+        sessions.remove(&file_id);
+        info!("Relay Upload: Cleaned up stale session for file {}", file_id);
+    });
 
     StatusCode::OK
 }
@@ -150,7 +168,7 @@ pub async fn relay_download(
         } else {
             let (tx, rx) = mpsc::channel(16);
             let session = RelaySession {
-                tx,
+                tx: Some(tx),
                 rx: Arc::new(tokio::sync::Mutex::new(None)),
             };
             sessions.insert(file_id.clone(), session);
