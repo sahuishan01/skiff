@@ -97,6 +97,35 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
+                // Custom folder picker launcher
+                val customSavePathState = remember {
+                    mutableStateOf(
+                        getSharedPreferences("skiff_prefs", MODE_PRIVATE)
+                            .getString("custom_save_path_uri", null)
+                    )
+                }
+
+                val folderPickerLauncher = rememberLauncherForActivityResult(
+                    contract = ActivityResultContracts.OpenDocumentTree()
+                ) { uri: Uri? ->
+                    if (uri != null) {
+                        try {
+                            contentResolver.takePersistableUriPermission(
+                                uri,
+                                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                            )
+                            getSharedPreferences("skiff_prefs", MODE_PRIVATE)
+                                .edit()
+                                .putString("custom_save_path_uri", uri.toString())
+                                .apply()
+                            customSavePathState.value = uri.toString()
+                            AppLogger.log("Custom save location selected: $uri")
+                        } catch (e: Exception) {
+                            AppLogger.log("Failed to obtain persistent folder permission: ${e.message}")
+                        }
+                    }
+                }
+
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
@@ -120,26 +149,25 @@ class MainActivity : ComponentActivity() {
                             )
                         }
 
-                        // Pairing Code Card
+                        // Sharing Code Display Card
                         item {
                             Card(
                                 modifier = Modifier.fillMaxWidth(),
                                 shape = RoundedCornerShape(12.dp)
                             ) {
                                 Column(
-                                    modifier = Modifier.padding(16.dp),
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    modifier = Modifier
+                                        .padding(16.dp)
+                                        .fillMaxWidth(),
+                                    horizontalAlignment = Alignment.CenterHorizontally
                                 ) {
                                     Text("Your Device Sharing Code", fontSize = 14.sp, color = Color.Gray)
                                     Text(
                                         text = deviceCode,
                                         fontSize = 32.sp,
-                                        fontWeight = FontWeight.ExtraBold,
-                                        letterSpacing = 2.sp,
-                                        color = MaterialTheme.colorScheme.secondary
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
                                     )
-                                    Text("Share this code with other devices to pair", fontSize = 12.sp, color = Color.LightGray)
                                 }
                             }
                         }
@@ -174,6 +202,56 @@ class MainActivity : ComponentActivity() {
                                         SkiffBackgroundService.reconnect(this@MainActivity)
                                     }) {
                                         Icon(Icons.Default.Refresh, contentDescription = "Reconnect")
+                                    }
+                                }
+                            }
+                        }
+
+                        // Save Location Configuration Card
+                        item {
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Column(
+                                    modifier = Modifier
+                                        .padding(16.dp)
+                                        .fillMaxWidth(),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Text("Save Location for Received Files", fontSize = 12.sp, color = Color.Gray)
+                                    Text(
+                                        text = if (customSavePathState.value != null) {
+                                            "Custom Folder: ${customSavePathState.value}"
+                                        } else {
+                                            "Downloads Folder (Default)"
+                                        },
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Button(
+                                            onClick = { folderPickerLauncher.launch(null) },
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Text("Change Save Location")
+                                        }
+                                        if (customSavePathState.value != null) {
+                                            OutlinedButton(
+                                                onClick = {
+                                                    getSharedPreferences("skiff_prefs", MODE_PRIVATE)
+                                                        .edit()
+                                                        .remove("custom_save_path_uri")
+                                                        .apply()
+                                                    customSavePathState.value = null
+                                                    AppLogger.log("Reset save location to Downloads default")
+                                                }
+                                            ) {
+                                                Text("Reset")
+                                            }
+                                        }
                                     }
                                 }
                             }

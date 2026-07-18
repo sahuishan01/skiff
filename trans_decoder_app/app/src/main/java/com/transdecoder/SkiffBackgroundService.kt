@@ -303,19 +303,23 @@ class SkiffBackgroundService : Service() {
                             return@launch
                         }
 
-                        val destinationFile = File(record.filePath)
-                        destinationFile.parentFile?.mkdirs()
+                        val outputStream = if (record.filePath.startsWith("content://")) {
+                            context.contentResolver.openOutputStream(Uri.parse(record.filePath), "wa")
+                        } else {
+                            val destinationFile = File(record.filePath)
+                            destinationFile.parentFile?.mkdirs()
+                            java.io.FileOutputStream(destinationFile)
+                        }
 
-                        body.byteStream().use { inputStream ->
-                            RandomAccessFile(destinationFile, "rw").use { raf ->
-                                raf.seek(0)
+                        outputStream?.use { out ->
+                            body.byteStream().use { inputStream ->
                                 val buffer = ByteArray(64 * 1024)
                                 var bytesRead: Int
                                 var totalReceived = 0L
                                 var lastUpdateMs = System.currentTimeMillis()
 
                                 while (inputStream.read(buffer).also { bytesRead = it } != -1) {
-                                    raf.write(buffer, 0, bytesRead)
+                                    out.write(buffer, 0, bytesRead)
                                     totalReceived += bytesRead
 
                                     val now = System.currentTimeMillis()
@@ -331,7 +335,7 @@ class SkiffBackgroundService : Service() {
                                 }
                             }
                         }
-                        AppLogger.log("Relay: Download completed. Bytes written: ${destinationFile.length()} for file $fileId")
+                        AppLogger.log("Relay: Download completed for file $fileId")
                     }
                 } catch (e: Exception) {
                     AppLogger.log("Relay Download Error: ${e.message}")
@@ -465,18 +469,23 @@ class SkiffBackgroundService : Service() {
             }
             if (record != null) {
                 AppLogger.log("TCP Server: Streaming payload to storage: ${record.filePath}...")
-                val destinationFile = File(record.filePath)
-                destinationFile.parentFile?.mkdirs()
-
                 var totalReceived = startOffset
-                RandomAccessFile(destinationFile, "rw").use { raf ->
-                    raf.seek(startOffset)
+
+                val outputStream = if (record.filePath.startsWith("content://")) {
+                    contentResolver.openOutputStream(Uri.parse(record.filePath), "wa")
+                } else {
+                    val destinationFile = File(record.filePath)
+                    destinationFile.parentFile?.mkdirs()
+                    java.io.FileOutputStream(destinationFile, true)
+                }
+
+                outputStream?.use { out ->
                     val buffer = ByteArray(64 * 1024)
                     var bytesRead: Int
                     var lastUpdateMs = System.currentTimeMillis()
 
                     while (input.read(buffer).also { bytesRead = it } != -1) {
-                        raf.write(buffer, 0, bytesRead)
+                        out.write(buffer, 0, bytesRead)
                         totalReceived += bytesRead
 
                         val now = System.currentTimeMillis()
@@ -553,16 +562,40 @@ class SkiffBackgroundService : Service() {
                 AppLogger.log("Incoming file transfer session initiated. Files count: ${message.files.size}")
                 serviceScope.launch(Dispatchers.IO) {
                     try {
-                        val downloadsDir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
-                            ?: filesDir
+                        val prefs = getSharedPreferences("skiff_prefs", MODE_PRIVATE)
+                        val customUriStr = prefs.getString("custom_save_path_uri", null)
+
                         message.files.forEach { file ->
-                            val localFile = File(downloadsDir, file.file_name)
-                            AppLogger.log("Saving file: ${file.file_name} -> ${localFile.absolutePath}")
+                            var destinationPath: String? = null
+                            if (customUriStr != null) {
+                                try {
+                                    val treeUri = Uri.parse(customUriStr)
+                                    val docDir = androidx.documentfile.provider.DocumentFile.fromTreeUri(this@SkiffBackgroundService, treeUri)
+                                    if (docDir != null && docDir.canWrite()) {
+                                        docDir.findFile(file.file_name)?.delete()
+                                        val newDoc = docDir.createFile("application/octet-stream", file.file_name)
+                                        if (newDoc != null) {
+                                            destinationPath = newDoc.uri.toString()
+                                            AppLogger.log("Custom save location resolved: ${newDoc.uri}")
+                                        }
+                                    }
+                                } catch (e: Exception) {
+                                    AppLogger.log("Custom save location error: ${e.message}. Falling back to Downloads.")
+                                }
+                            }
+
+                            if (destinationPath == null) {
+                                val downloadsDir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: filesDir
+                                val localFile = File(downloadsDir, file.file_name)
+                                destinationPath = localFile.absolutePath
+                                AppLogger.log("Default save location resolved: $destinationPath")
+                            }
+
                             val newRecord = TransferEntity(
                                 fileId = file.file_id,
                                 sessionId = message.session_id,
                                 fileName = file.file_name,
-                                filePath = localFile.absolutePath,
+                                filePath = destinationPath,
                                 fileSize = file.file_size,
                                 fileHash = file.file_hash,
                                 bytesTransferred = 0L,
