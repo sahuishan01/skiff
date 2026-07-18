@@ -95,6 +95,17 @@ sealed class WsMessage {
         val file_id: String,
         val bytes_transferred: Long
     ) : WsMessage()
+
+    @Serializable
+    @SerialName("CANCEL_TRANSFER")
+    data class CancelTransfer(
+        val file_id: String,
+        val target_device_id: String
+    ) : WsMessage()
+
+    @Serializable
+    @SerialName("TRANSFER_CANCELLED")
+    data class TransferCancelled(val file_id: String) : WsMessage()
 }
 
 @Serializable
