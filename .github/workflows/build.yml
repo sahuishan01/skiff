@@ -37,9 +37,14 @@ jobs:
           # Capture output to log file to allow remote debugging on failure
           ./gradlew assembleRelease > ../build.log 2>&1
           
-          # Find compiled release APK and place it in the target release directory
+          # Extract version name from build.gradle.kts
+          VERSION=$(grep 'versionName' app/build.gradle.kts | sed 's/.*"\(.*\)".*/\1/')
+          echo "APK version: $VERSION"
+          
+          # Find compiled release APK and rename to skiff-{version}.apk
           mkdir -p app/build/outputs/apk/release
-          find app/build/outputs/apk/ -name "*.apk" -exec cp {} app/build/outputs/apk/release/app-release.apk \;
+          find app/build/outputs/apk/ -name "*.apk" -exec cp {} "app/build/outputs/apk/release/skiff-${VERSION}.apk" \;
+          echo "APK_FILE=skiff-${VERSION}.apk" >> $GITHUB_ENV
 
       - name: Push Build Log on Failure
         if: failure()
@@ -61,5 +66,5 @@ jobs:
           draft: false
           prerelease: false
           files: |
-            trans_decoder_app/app/build/outputs/apk/release/app-release.apk
+            trans_decoder_app/app/build/outputs/apk/release/skiff-0.0.23.apk
           token: ${{ secrets.GITHUB_TOKEN }}
