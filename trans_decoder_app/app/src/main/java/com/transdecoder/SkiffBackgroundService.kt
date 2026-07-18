@@ -10,6 +10,7 @@ import android.os.IBinder
 import androidx.compose.runtime.mutableStateListOf
 import androidx.core.app.NotificationCompat
 import com.transdecoder.data.local.AppDatabase
+import com.transdecoder.data.local.KnownPeer
 import com.transdecoder.data.local.TransferEntity
 import com.transdecoder.data.local.TransferStatus
 import com.transdecoder.data.local.TransferDirection
@@ -100,6 +101,16 @@ class SkiffBackgroundService : Service() {
             webSocketClient?.sendMessage(WsMessage.IceCandidate(senderId, "LOCAL_IP:$localIp"))
 
             activeIncomingRequest.value = null
+
+            // Save to known peers
+            instance?.let { svc ->
+                CoroutineScope(Dispatchers.IO).launch {
+                    val peerDb = AppDatabase.getDatabase(svc)
+                    peerDb.knownPeerDao().upsertPeer(
+                        KnownPeer(deviceId = senderId, lastConnectedAt = System.currentTimeMillis())
+                    )
+                }
+            }
         }
 
         fun rejectPairRequest(senderId: String) {
@@ -539,6 +550,13 @@ class SkiffBackgroundService : Service() {
                 AppLogger.log("Pair request accepted by peer. Peer IP: ${message.receiver_endpoint}")
                 updateNotification("Connected to Peer")
                 peerIpAddress = message.receiver_endpoint
+
+                // Save to known peers
+                serviceScope.launch(Dispatchers.IO) {
+                    db.knownPeerDao().upsertPeer(
+                        KnownPeer(deviceId = message.receiver_device_id, lastConnectedAt = System.currentTimeMillis())
+                    )
+                }
             }
             is WsMessage.RequestRejected -> {
                 connectionStatus.value = "Pairing Rejected"

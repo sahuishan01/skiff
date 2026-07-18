@@ -13,10 +13,12 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
@@ -39,6 +41,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.transdecoder.data.local.AppDatabase
+import com.transdecoder.data.local.KnownPeer
 import com.transdecoder.data.local.TransferDirection
 import com.transdecoder.data.local.TransferEntity
 import com.transdecoder.data.local.TransferStatus
@@ -100,6 +103,8 @@ class MainActivity : ComponentActivity() {
                 val peerCodeInput = remember { mutableStateOf("") }
                 val isPairing = remember { mutableStateOf(false) }
                 val transfers by db.transferDao().getAllTransfersFlow()
+                    .collectAsState(initial = emptyList())
+                val knownPeers by db.knownPeerDao().getAllPeersFlow()
                     .collectAsState(initial = emptyList())
 
                 var showSettings by remember { mutableStateOf(false) }
@@ -196,6 +201,17 @@ class MainActivity : ComponentActivity() {
                                 isPaired = activePeerDeviceId != null,
                                 isPairing = isPairing.value,
                                 onSendFiles = { filePickerLauncher.launch("*/*") }
+                            )
+
+                            PeersSection(
+                                peers = knownPeers,
+                                activePeerId = activePeerDeviceId,
+                                peerCodeInput = peerCodeInput,
+                                onPair = { code ->
+                                    isPairing.value = true
+                                    peerCodeInput.value = code
+                                    SkiffBackgroundService.sendPairRequest(code)
+                                }
                             )
 
                             TransferListSection(
@@ -376,6 +392,7 @@ private fun PairingCodeHero(
     val isConnecting = connectionStatus == "Connecting..."
     val isRegistered = connectionStatus.contains("Registered", ignoreCase = true) ||
             connectionStatus.contains("Waiting", ignoreCase = true)
+    val isPaired = connectionStatus == "Paired & Connected"
 
     Box(
         modifier = Modifier
@@ -415,6 +432,7 @@ private fun PairingCodeHero(
                 text = when {
                     isConnecting -> "Registering device..."
                     isRegistered -> "Share this code to pair"
+                    isPaired -> "Connected"
                     else -> "Waiting for connection..."
                 },
                 style = MaterialTheme.typography.bodySmall,
@@ -513,6 +531,82 @@ private fun ActionSection(
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.SemiBold
             )
+        }
+    }
+}
+
+@Composable
+private fun PeersSection(
+    peers: List<KnownPeer>,
+    activePeerId: String?,
+    peerCodeInput: MutableState<String>,
+    onPair: (String) -> Unit
+) {
+    if (peers.isEmpty()) return
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .padding(top = 4.dp, bottom = 4.dp)
+    ) {
+        Text(
+            text = "Peers (${peers.size})",
+            style = MaterialTheme.typography.labelLarge,
+            color = SkiffColors.TextSecondary,
+            modifier = Modifier.padding(bottom = 6.dp)
+        )
+
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(peers) { peer ->
+                val isActive = peer.deviceId == activePeerId
+                val displayName = peer.displayName.ifEmpty {
+                    peer.deviceId.take(8)
+                }
+
+                Surface(
+                    shape = MaterialTheme.shapes.medium,
+                    color = if (isActive) {
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
+                    } else {
+                        SkiffColors.SurfaceElevated
+                    },
+                    modifier = Modifier
+                        .clickable(enabled = !isActive) {
+                            peerCodeInput.value = peer.deviceId.take(6)
+                            onPair(peer.deviceId.take(6))
+                        }
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(if (isActive) SkiffColors.Green else SkiffColors.TextMuted)
+                        )
+                        Text(
+                            text = displayName,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = if (isActive) FontWeight.Medium else FontWeight.Normal,
+                            color = if (isActive) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.onSurface
+                        )
+                        if (isActive) {
+                            Text(
+                                text = "Connected",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = SkiffColors.Green
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 }

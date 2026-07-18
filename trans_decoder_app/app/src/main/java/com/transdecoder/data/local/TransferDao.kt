@@ -33,3 +33,21 @@ interface TransferDao {
     @Query("DELETE FROM transfers WHERE fileId = :fileId")
     suspend fun deleteTransfer(fileId: String)
 }
+
+@Dao
+interface KnownPeerDao {
+    @Query("SELECT * FROM known_peers ORDER BY lastConnectedAt DESC")
+    fun getAllPeersFlow(): Flow<List<KnownPeer>>
+
+    @Query("SELECT * FROM known_peers ORDER BY lastConnectedAt DESC")
+    suspend fun getAllPeers(): List<KnownPeer>
+
+    @Query("SELECT * FROM known_peers WHERE deviceId = :deviceId LIMIT 1")
+    suspend fun getPeer(deviceId: String): KnownPeer?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertPeer(peer: KnownPeer)
+
+    @Delete
+    suspend fun deletePeer(peer: KnownPeer)
+}
