@@ -12,24 +12,28 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -40,6 +44,8 @@ import com.transdecoder.data.local.TransferEntity
 import com.transdecoder.data.local.TransferStatus
 import com.transdecoder.data.network.FileMetadataInput
 import com.transdecoder.data.network.WsMessage
+import com.transdecoder.ui.theme.PairCodeFont
+import com.transdecoder.ui.theme.SkiffColors
 import com.transdecoder.ui.theme.SkiffTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -51,24 +57,32 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
+
         db = AppDatabase.getDatabase(this)
 
-        // Request POST_NOTIFICATIONS runtime permission on Android 13+ (needed for Foreground Service status)
+        // Request POST_NOTIFICATIONS on Android 13+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             val requestPermissionLauncher = registerForActivityResult(
                 ActivityResultContracts.RequestPermission()
             ) { isGranted: Boolean ->
                 if (!isGranted) {
-                    Toast.makeText(this, "Notification permission is required for background sync", Toast.LENGTH_LONG).show()
+                    Toast.makeText(
+                        this,
+                        "Background sync needs notification permission",
+                        Toast.LENGTH_LONG
+                    ).show()
                 }
             }
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            if (ContextCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.POST_NOTIFICATIONS
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
                 requestPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
             }
         }
 
-        // Start Foreground Background Service
+        // Start foreground background service
         val serviceIntent = Intent(this, SkiffBackgroundService::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(serviceIntent)
@@ -78,31 +92,42 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             SkiffTheme {
-                // Collect states from the persistent background service
                 val deviceCode by SkiffBackgroundService.deviceCode.collectAsState()
                 val connectionStatus by SkiffBackgroundService.connectionStatus.collectAsState()
                 val activeIncomingRequest by SkiffBackgroundService.activeIncomingRequest.collectAsState()
                 val activePeerDeviceId by SkiffBackgroundService.activePeerDeviceId.collectAsState()
 
                 val peerCodeInput = remember { mutableStateOf("") }
-                val transfers by db.transferDao().getAllTransfersFlow().collectAsState(initial = emptyList())
+                val isPairing = remember { mutableStateOf(false) }
+                val transfers by db.transferDao().getAllTransfersFlow()
+                    .collectAsState(initial = emptyList())
 
-                // File picker launcher
+                var showSettings by remember { mutableStateOf(false) }
+
+                // Reset pairing loading state when connection status resolves
+                LaunchedEffect(connectionStatus) {
+                    if (connectionStatus in listOf("Paired & Connected", "Pairing Rejected", "Registered & Waiting")) {
+                        isPairing.value = false
+                    }
+                }
+
+                // File picker
                 val filePickerLauncher = rememberLauncherForActivityResult(
                     contract = ActivityResultContracts.GetMultipleContents()
                 ) { uris: List<Uri> ->
                     val peerId = activePeerDeviceId
                     if (uris.isNotEmpty() && peerId != null) {
-                        sendFiles(uris, peerId, transfers.firstOrNull()?.sessionId ?: UUID.randomUUID().toString())
+                        sendFiles(uris, peerId, transfers.firstOrNull()?.sessionId
+                            ?: UUID.randomUUID().toString())
                     }
                 }
 
-                // Custom folder picker launcher
+                // Custom save folder preference
+                val prefs = remember {
+                    getSharedPreferences("skiff_prefs", MODE_PRIVATE)
+                }
                 val customSavePathState = remember {
-                    mutableStateOf(
-                        getSharedPreferences("skiff_prefs", MODE_PRIVATE)
-                            .getString("custom_save_path_uri", null)
-                    )
+                    mutableStateOf(prefs.getString("custom_save_path_uri", null))
                 }
 
                 val folderPickerLauncher = rememberLauncherForActivityResult(
@@ -112,16 +137,16 @@ class MainActivity : ComponentActivity() {
                         try {
                             contentResolver.takePersistableUriPermission(
                                 uri,
-                                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                                Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                                        Intent.FLAG_GRANT_WRITE_URI_PERMISSION
                             )
-                            getSharedPreferences("skiff_prefs", MODE_PRIVATE)
-                                .edit()
-                                .putString("custom_save_path_uri", uri.toString())
-                                .apply()
+                            prefs.edit().putString("custom_save_path_uri", uri.toString()).apply()
                             customSavePathState.value = uri.toString()
                             AppLogger.log("Custom save location selected: $uri")
                         } catch (e: Exception) {
-                            AppLogger.log("Failed to obtain persistent folder permission: ${e.message}")
+                            AppLogger.log(
+                                "Failed to obtain persistent folder permission: ${e.message}"
+                            )
                         }
                     }
                 }
@@ -130,259 +155,80 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    // Unified root LazyColumn to support dynamic scrolling in landscape orientation
-                    LazyColumn(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
-                        // Title Bar
-                        item {
-                            Text(
-                                text = "⛵ Skiff P2P Share",
-                                fontSize = 24.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                                textAlign = TextAlign.Center,
-                                color = MaterialTheme.colorScheme.primary
+                    Scaffold(
+                        topBar = {
+                            SkiffTopBar(
+                                connectionStatus = connectionStatus,
+                                onReconnect = {
+                                    SkiffBackgroundService.reconnect(this@MainActivity)
+                                },
+                                onSettings = { showSettings = true }
                             )
                         }
+                    ) { padding ->
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(padding)
+                        ) {
+                            // ── Hero: Pairing Code ─────────────────────────────
+                            PairingCodeHero(
+                                deviceCode = deviceCode,
+                                connectionStatus = connectionStatus
+                            )
 
-                        // Sharing Code Display Card
-                        item {
-                            Card(
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(12.dp)
-                            ) {
-                                Column(
-                                    modifier = Modifier
-                                        .padding(16.dp)
-                                        .fillMaxWidth(),
-                                    horizontalAlignment = Alignment.CenterHorizontally
-                                ) {
-                                    Text("Your Device Sharing Code", fontSize = 14.sp, color = Color.Gray)
-                                    Text(
-                                        text = deviceCode,
-                                        fontSize = 32.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                }
-                            }
-                        }
-
-                        // Connection Status Card
-                        item {
-                            Card(
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(12.dp)
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .padding(16.dp)
-                                        .fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column {
-                                        Text("Connection Status", fontSize = 12.sp, color = Color.Gray)
-                                        Text(
-                                            text = connectionStatus,
-                                            fontSize = 16.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = when (connectionStatus) {
-                                                "Paired & Connected" -> Color.Green
-                                                "Connecting..." -> Color.Yellow
-                                                else -> Color.Red
-                                            }
-                                        )
+                            // ── Action Section ─────────────────────────────────
+                            ActionSection(
+                                peerCodeInput = peerCodeInput.value,
+                                onPeerCodeChange = { peerCodeInput.value = it.uppercase() },
+                                onPair = {
+                                    if (peerCodeInput.value.length == 6) {
+                                        isPairing.value = true
+                                        SkiffBackgroundService.sendPairRequest(peerCodeInput.value)
+                                    } else {
+                                        Toast.makeText(
+                                            this@MainActivity,
+                                            "Code must be 6 characters",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
                                     }
-                                    Button(onClick = {
-                                        SkiffBackgroundService.reconnect(this@MainActivity)
-                                    }) {
-                                        Icon(Icons.Default.Refresh, contentDescription = "Reconnect")
-                                    }
-                                }
-                            }
-                        }
+                                },
+                                isPaired = activePeerDeviceId != null,
+                                isPairing = isPairing.value,
+                                onSendFiles = { filePickerLauncher.launch("*/*") }
+                            )
 
-                        // Save Location Configuration Card
-                        item {
-                            Card(
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(12.dp)
-                            ) {
-                                Column(
-                                    modifier = Modifier
-                                        .padding(16.dp)
-                                        .fillMaxWidth(),
-                                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    Text("Save Location for Received Files", fontSize = 12.sp, color = Color.Gray)
-                                    Text(
-                                        text = if (customSavePathState.value != null) {
-                                            "Custom Folder: ${customSavePathState.value}"
-                                        } else {
-                                            "Downloads Folder (Default)"
-                                        },
-                                        fontSize = 14.sp,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                    Row(
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        Button(
-                                            onClick = { folderPickerLauncher.launch(null) },
-                                            modifier = Modifier.weight(1f)
-                                        ) {
-                                            Text("Change Save Location")
-                                        }
-                                        if (customSavePathState.value != null) {
-                                            OutlinedButton(
-                                                onClick = {
-                                                    getSharedPreferences("skiff_prefs", MODE_PRIVATE)
-                                                        .edit()
-                                                        .remove("custom_save_path_uri")
-                                                        .apply()
-                                                    customSavePathState.value = null
-                                                    AppLogger.log("Reset save location to Downloads default")
-                                                }
-                                            ) {
-                                                Text("Reset")
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // Peer Pairing Input Card
-                        item {
-                            Card(
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(12.dp)
-                            ) {
-                                Column(
-                                    modifier = Modifier.padding(16.dp),
-                                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                                ) {
-                                    Text("Connect to Peer Device", fontWeight = FontWeight.Bold)
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        OutlinedTextField(
-                                            value = peerCodeInput.value,
-                                            onValueChange = { peerCodeInput.value = it.uppercase() },
-                                            label = { Text("6-Digit Code") },
-                                            modifier = Modifier.weight(1f),
-                                            singleLine = true
-                                        )
-                                        Button(
-                                            onClick = {
-                                                if (peerCodeInput.value.length == 6) {
-                                                    SkiffBackgroundService.sendPairRequest(peerCodeInput.value)
-                                                } else {
-                                                    Toast.makeText(this@MainActivity, "Enter valid 6-char code", Toast.LENGTH_SHORT).show()
-                                                }
-                                            },
-                                            modifier = Modifier.height(56.dp)
-                                        ) {
-                                            Text("Pair")
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // Send Files Button (Enabled only when paired)
-                        item {
-                            Button(
-                                onClick = { filePickerLauncher.launch("*/*") },
-                                enabled = activePeerDeviceId != null,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(50.dp)
-                            ) {
-                                Text("Select & Send Files", fontSize = 16.sp)
-                            }
-                        }
-
-                        // Progress bars list header
-                        item {
-                            Text("Transfers List", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                        }
-
-                        // Progress bars list items (rendered sequentially in same scrollable viewport)
-                        items(transfers) { transfer ->
-                            TransferProgressItem(transfer)
-                        }
-
-                        // Debug Logs Section
-                        item {
-                            var showLogs by remember { mutableStateOf(false) }
-                            Card(
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(12.dp)
-                            ) {
-                                Column(
-                                    modifier = Modifier.padding(16.dp),
-                                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text("Debug Logs (${AppLogger.logHistory.size})", fontWeight = FontWeight.Bold)
-                                        TextButton(onClick = { showLogs = !showLogs }) {
-                                            Text(if (showLogs) "Hide" else "Show")
-                                        }
-                                    }
-                                    if (showLogs) {
-                                        Column(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .height(200.dp)
-                                                .verticalScroll(rememberScrollState()),
-                                            verticalArrangement = Arrangement.spacedBy(4.dp)
-                                        ) {
-                                            AppLogger.logHistory.forEach { log ->
-                                                Text(
-                                                    text = log,
-                                                    fontSize = 10.sp,
-                                                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                            TransferListSection(
+                                transfers = transfers,
+                                isPaired = activePeerDeviceId != null
+                            )
                         }
                     }
 
-                    // Dialog for incoming pairing request
+                    // ── Incoming Pair Request Dialog ──────────────────────────
                     activeIncomingRequest?.let { request ->
-                        AlertDialog(
-                            onDismissRequest = { /* Force action */ },
-                            title = { Text("Connection Request") },
-                            text = { Text("Incoming connection request from code ${request.second}. Do you want to pair?") },
-                            confirmButton = {
-                                Button(onClick = {
-                                    SkiffBackgroundService.acceptPairRequest(request.first)
-                                }) {
-                                    Text("Accept")
-                                }
+                        PairRequestDialog(
+                            code = request.second,
+                            onAccept = {
+                                SkiffBackgroundService.acceptPairRequest(request.first)
                             },
-                            dismissButton = {
-                                TextButton(onClick = {
-                                    SkiffBackgroundService.rejectPairRequest(request.first)
-                                }) {
-                                    Text("Reject")
-                                }
+                            onReject = {
+                                SkiffBackgroundService.rejectPairRequest(request.first)
                             }
+                        )
+                    }
+
+                    // ── Settings Dialog ────────────────────────────────────────
+                    if (showSettings) {
+                        SettingsDialog(
+                            customSavePathUri = customSavePathState.value,
+                            onChangeSaveLocation = { folderPickerLauncher.launch(null) },
+                            onResetSaveLocation = {
+                                prefs.edit().remove("custom_save_path_uri").apply()
+                                customSavePathState.value = null
+                                AppLogger.log("Reset save location to Downloads default")
+                            },
+                            onDismiss = { showSettings = false }
                         )
                     }
                 }
@@ -418,7 +264,7 @@ class MainActivity : ComponentActivity() {
                     val (name, size) = getUriMetadata(uri)
                     val fileId = UUID.randomUUID().toString()
                     val fileHash = UUID.randomUUID().toString()
-                    
+
                     val newFile = TransferEntity(
                         fileId = fileId,
                         sessionId = sessionId,
@@ -432,7 +278,7 @@ class MainActivity : ComponentActivity() {
                         peerDeviceId = peerId
                     )
                     db.transferDao().insertTransfer(newFile)
-                    
+
                     FileMetadataInput(
                         file_id = fileId,
                         file_name = name,
@@ -441,8 +287,7 @@ class MainActivity : ComponentActivity() {
                         file_hash = fileHash
                     )
                 }
-                
-                // 1. Notify the receiver peer over WS signaling channel that files are incoming
+
                 SkiffBackgroundService.webSocketClient?.sendMessage(
                     WsMessage.InitiateTransfer(
                         session_id = sessionId,
@@ -451,7 +296,6 @@ class MainActivity : ComponentActivity() {
                     )
                 )
 
-                // 2. Start streaming each file over TCP socket
                 fileList.zip(uris).forEach { (file, uri) ->
                     SkiffBackgroundService.sendFileTcp(this@MainActivity, file.file_id, uri)
                 }
@@ -463,73 +307,555 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@Composable
-fun TransferProgressItem(transfer: TransferEntity) {
-    val progress = if (transfer.fileSize > 0) transfer.bytesTransferred.toFloat() / transfer.fileSize else 0f
+// ═══════════════════════════════════════════════════════════════════════════════
+// Composable Components
+// ═══════════════════════════════════════════════════════════════════════════════
 
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SkiffTopBar(
+    connectionStatus: String,
+    onReconnect: () -> Unit,
+    onSettings: () -> Unit
+) {
+    val statusColor = when (connectionStatus) {
+        "Paired & Connected" -> SkiffColors.Green
+        "Connecting..." -> SkiffColors.Amber
+        else -> SkiffColors.TextMuted
+    }
+
+    TopAppBar(
+        title = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(statusColor)
+                )
+                Text(
+                    text = connectionStatus,
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        },
+        actions = {
+            IconButton(onClick = onReconnect) {
+                Icon(
+                    imageVector = Icons.Default.Refresh,
+                    contentDescription = "Reconnect",
+                    tint = SkiffColors.TextSecondary
+                )
+            }
+            IconButton(onClick = onSettings) {
+                Icon(
+                    imageVector = Icons.Default.Menu,
+                    contentDescription = "Settings",
+                    tint = SkiffColors.TextSecondary
+                )
+            }
+        },
+        colors = TopAppBarDefaults.topAppBarColors(
+            containerColor = MaterialTheme.colorScheme.background,
+            titleContentColor = MaterialTheme.colorScheme.onBackground
+        )
+    )
+}
+
+@Composable
+private fun PairingCodeHero(
+    deviceCode: String,
+    connectionStatus: String
+) {
+    val isConnecting = connectionStatus == "Connecting..."
+    val isRegistered = connectionStatus.contains("Registered", ignoreCase = true) ||
+            connectionStatus.contains("Waiting", ignoreCase = true)
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .padding(top = 8.dp, bottom = 16.dp)
     ) {
-        Row(
+        Column(
             modifier = Modifier
-                .padding(12.dp)
-                .fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .fillMaxWidth()
+                .clip(MaterialTheme.shapes.large)
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+                .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Icon(
-                imageVector = if (transfer.direction == TransferDirection.SEND) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                contentDescription = "Direction",
-                tint = if (transfer.direction == TransferDirection.SEND) Color.Cyan else Color.Magenta
+            Text(
+                text = "Your code",
+                style = MaterialTheme.typography.labelMedium,
+                color = SkiffColors.TextMuted
             )
 
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = transfer.fileName,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp,
-                    maxLines = 1
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Text(
+                text = deviceCode,
+                style = MaterialTheme.typography.displayLarge,
+                fontFamily = PairCodeFont,
+                color = MaterialTheme.colorScheme.primary,
+                textAlign = TextAlign.Center,
+                letterSpacing = 6.sp,
+                fontWeight = FontWeight.Bold
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = when {
+                    isConnecting -> "Registering device..."
+                    isRegistered -> "Share this code to pair"
+                    else -> "Waiting for connection..."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = SkiffColors.TextSecondary,
+                textAlign = TextAlign.Center
+            )
+        }
+    }
+}
+
+@Composable
+private fun ActionSection(
+    peerCodeInput: String,
+    onPeerCodeChange: (String) -> Unit,
+    onPair: () -> Unit,
+    isPaired: Boolean,
+    isPairing: Boolean,
+    onSendFiles: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        // Pair input row
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            OutlinedTextField(
+                value = peerCodeInput,
+                onValueChange = onPeerCodeChange,
+                placeholder = { Text("Peer code") },
+                singleLine = true,
+                modifier = Modifier.weight(1f),
+                textStyle = MaterialTheme.typography.titleLarge.copy(
+                    fontFamily = PairCodeFont,
+                    letterSpacing = 4.sp
+                ),
+                shape = MaterialTheme.shapes.medium
+            )
+
+            Button(
+                onClick = onPair,
+                enabled = !isPairing,
+                modifier = Modifier
+                    .height(52.dp)
+                    .widthIn(min = 90.dp),
+                shape = MaterialTheme.shapes.medium,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary
                 )
-                Spacer(modifier = Modifier.height(4.dp))
-                LinearProgressIndicator(
-                    progress = progress,
-                    modifier = Modifier.fillMaxWidth(),
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(
-                        text = "${formatBytes(transfer.bytesTransferred)} / ${formatBytes(transfer.fileSize)}",
-                        fontSize = 11.sp,
-                        color = Color.Gray
+            ) {
+                if (isPairing) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onPrimary
                     )
+                } else {
                     Text(
-                        text = "${(progress * 100).toInt()}%",
-                        fontSize = 11.sp,
-                        color = Color.Gray
+                        text = "Pair",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold
                     )
                 }
             }
+        }
 
-            if (transfer.status == TransferStatus.COMPLETED) {
-                Icon(
-                    imageVector = Icons.Default.CheckCircle,
-                    contentDescription = "Completed",
-                    tint = Color.Green
-                )
+        // Send files button
+        Button(
+            onClick = onSendFiles,
+            enabled = isPaired,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(50.dp),
+            shape = MaterialTheme.shapes.medium,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                contentColor = MaterialTheme.colorScheme.primary,
+                disabledContainerColor = SkiffColors.SurfaceElevated.copy(alpha = 0.5f),
+                disabledContentColor = SkiffColors.TextSecondary
+            )
+        ) {
+            Icon(
+                imageVector = Icons.Default.KeyboardArrowUp,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = if (isPaired) "Send Files" else "Pair to send files",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+    }
+}
+
+@Composable
+private fun TransferListSection(
+    transfers: List<TransferEntity>,
+    isPaired: Boolean
+) {
+    Text(
+        text = "Transfers",
+        style = MaterialTheme.typography.labelLarge,
+        color = SkiffColors.TextSecondary,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .padding(top = 8.dp, bottom = 4.dp)
+    )
+
+    if (transfers.isEmpty()) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = if (isPaired)
+                    "Select files to send or wait for transfers"
+                else
+                    "Pair a device to start sharing",
+                style = MaterialTheme.typography.bodyMedium,
+                color = SkiffColors.TextMuted,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(32.dp)
+            )
+        }
+    } else {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            items(transfers, key = { it.fileId }) { transfer ->
+                TransferTimelineItem(transfer = transfer)
             }
         }
     }
 }
 
+@Composable
+private fun TransferTimelineItem(transfer: TransferEntity) {
+    val progress = if (transfer.fileSize > 0) {
+        (transfer.bytesTransferred.toFloat() / transfer.fileSize).coerceIn(0f, 1f)
+    } else 0f
+
+    val isCompleted = transfer.status == TransferStatus.COMPLETED
+    val isFailed = transfer.status == TransferStatus.FAILED
+    val isOutgoing = transfer.direction == TransferDirection.SEND
+    val isActive = transfer.status == TransferStatus.TRANSFERRING ||
+            transfer.status == TransferStatus.PENDING
+
+    val statusColor = when {
+        isCompleted -> SkiffColors.Green
+        isFailed -> SkiffColors.Coral
+        else -> MaterialTheme.colorScheme.primary
+    }
+
+    val directionIcon = if (isOutgoing) Icons.Default.KeyboardArrowUp
+    else Icons.Default.KeyboardArrowDown
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.medium)
+            .background(MaterialTheme.colorScheme.surface)
+            .padding(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // Direction indicator
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .clip(CircleShape)
+                .background(statusColor.copy(alpha = 0.12f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = directionIcon,
+                contentDescription = if (isOutgoing) "Sent" else "Received",
+                tint = statusColor,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = transfer.fileName,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                color = if (isFailed) SkiffColors.Coral else MaterialTheme.colorScheme.onSurface
+            )
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            if (isActive) {
+                // Active progress
+                LinearProgressIndicator(
+                    progress = progress,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(3.dp)
+                        .clip(MaterialTheme.shapes.small),
+                    color = MaterialTheme.colorScheme.primary,
+                    trackColor = SkiffColors.Border,
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "${formatBytes(transfer.bytesTransferred)} / ${formatBytes(transfer.fileSize)}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = SkiffColors.TextSecondary
+                )
+                Text(
+                    text = when {
+                        isCompleted -> "Complete"
+                        isFailed -> "Failed"
+                        transfer.status == TransferStatus.TRANSFERRING -> "${(progress * 100).toInt()}%"
+                        transfer.status == TransferStatus.PENDING -> "Waiting..."
+                        else -> "${(progress * 100).toInt()}%"
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Medium,
+                    color = statusColor
+                )
+            }
+        }
+
+        // Completion checkmark
+        if (isCompleted) {
+            Icon(
+                imageVector = Icons.Default.CheckCircle,
+                contentDescription = "Completed",
+                tint = SkiffColors.Green,
+                modifier = Modifier.size(22.dp)
+            )
+        }
+    }
+}
+
+// ── Dialogs ──────────────────────────────────────────────────────────────────
+
+@Composable
+private fun PairRequestDialog(
+    code: String,
+    onAccept: () -> Unit,
+    onReject: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = { onReject() },
+        containerColor = MaterialTheme.colorScheme.surface,
+        shape = MaterialTheme.shapes.large,
+        title = {
+            Text(
+                text = "Connection Request",
+                style = MaterialTheme.typography.headlineMedium
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = "A device wants to pair with you. Verify the code matches what the other device shows.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = SkiffColors.TextSecondary
+                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = "Code:",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = SkiffColors.TextMuted
+                    )
+                    Text(
+                        text = code,
+                        style = MaterialTheme.typography.titleLarge.copy(
+                            fontFamily = PairCodeFont,
+                            letterSpacing = 4.sp
+                        ),
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onAccept,
+                shape = MaterialTheme.shapes.medium,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary
+                )
+            ) {
+                Text("Accept")
+            }
+        },
+        dismissButton = {
+            OutlinedButton(
+                onClick = onReject,
+                shape = MaterialTheme.shapes.medium,
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = SkiffColors.TextSecondary
+                )
+            ) {
+                Text("Reject")
+            }
+        }
+    )
+}
+
+@Composable
+private fun SettingsDialog(
+    customSavePathUri: String?,
+    onChangeSaveLocation: () -> Unit,
+    onResetSaveLocation: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    var showDebugLogs by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
+        shape = MaterialTheme.shapes.large,
+        title = {
+            Text(
+                text = "Settings",
+                style = MaterialTheme.typography.headlineMedium
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                // Save location section
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "Save Location",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Text(
+                        text = if (customSavePathUri != null) {
+                            "Custom folder selected"
+                        } else {
+                            "Downloads folder (default)"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = SkiffColors.TextSecondary
+                    )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = onChangeSaveLocation,
+                            modifier = Modifier.weight(1f),
+                            shape = MaterialTheme.shapes.medium
+                        ) {
+                            Text("Change Location")
+                        }
+                        if (customSavePathUri != null) {
+                            TextButton(onClick = onResetSaveLocation) {
+                                Text("Reset", color = SkiffColors.TextSecondary)
+                            }
+                        }
+                    }
+                }
+
+                Divider(color = SkiffColors.Border, thickness = 1.dp)
+
+                // Debug logs section
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Debug Logs",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        TextButton(onClick = { showDebugLogs = !showDebugLogs }) {
+                            Text(
+                                if (showDebugLogs) "Hide" else "Show (${AppLogger.logHistory.size})"
+                            )
+                        }
+                    }
+                    if (showDebugLogs) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(180.dp)
+                                .clip(MaterialTheme.shapes.small)
+                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                                .padding(8.dp)
+                                .verticalScroll(rememberScrollState())
+                        ) {
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                AppLogger.logHistory.forEach { log ->
+                                    Text(
+                                        text = log,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = SkiffColors.TextSecondary,
+                                        lineHeight = 14.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Done", color = MaterialTheme.colorScheme.primary)
+            }
+        }
+    )
+}
+
+// ── Utilities ────────────────────────────────────────────────────────────────
+
 fun formatBytes(bytes: Long): String {
     return when {
-        bytes >= 1024 * 1024 -> "${bytes / 1024 / 1024}MB"
-        bytes >= 1024 -> "${bytes / 1024}KB"
+        bytes >= 1024 * 1024 * 1024 -> String.format("%.1fGB", bytes / (1024.0 * 1024.0 * 1024.0))
+        bytes >= 1024 * 1024 -> String.format("%.1fMB", bytes / (1024.0 * 1024.0))
+        bytes >= 1024 -> String.format("%.1fKB", bytes / 1024.0)
         else -> "${bytes}B"
     }
 }
