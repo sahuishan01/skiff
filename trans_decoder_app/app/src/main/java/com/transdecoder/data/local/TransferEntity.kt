@@ -1,6 +1,7 @@
 package com.transdecoder.data.local
 
 import androidx.room.Entity
+import androidx.room.PrimaryKey
 
 enum class TransferStatus {
     PENDING,
@@ -28,4 +29,11 @@ data class TransferEntity(
     val direction: TransferDirection,
     val peerDeviceId: String,
     val updatedAt: Long = System.currentTimeMillis()
+)
+
+@Entity(tableName = "known_peers")
+data class KnownPeer(
+    @PrimaryKey val deviceId: String,
+    val displayName: String = "",
+    val lastConnectedAt: Long = System.currentTimeMillis()
 )
