@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Hull -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M18,74 Q54,62 90,74 Q72,80 54,80 Q36,80 18,74 Z" />
+
+    <!-- Sail -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M56,28 L56,70 L88,70 Z" />
+
+    <!-- Mast -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:pathData="M56,22 L56,76" />
+</vector>
