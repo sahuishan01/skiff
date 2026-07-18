@@ -209,13 +209,7 @@ class MainActivity : ComponentActivity() {
 
                             PeersSection(
                                 peers = knownPeers,
-                                activePeerId = activePeerDeviceId,
-                                peerCodeInput = peerCodeInput,
-                                onPair = { code ->
-                                    isPairing.value = true
-                                    peerCodeInput.value = code
-                                    SkiffBackgroundService.sendPairRequest(code)
-                                }
+                                activePeerId = activePeerDeviceId
                             )
 
                             TransferListSection(
@@ -543,9 +537,7 @@ private fun ActionSection(
 @Composable
 private fun PeersSection(
     peers: List<KnownPeer>,
-    activePeerId: String?,
-    peerCodeInput: MutableState<String>,
-    onPair: (String) -> Unit
+    activePeerId: String?
 ) {
     if (peers.isEmpty()) return
 
@@ -583,8 +575,7 @@ private fun PeersSection(
                     },
                     modifier = Modifier
                         .clickable(enabled = !isActive) {
-                            peerCodeInput.value = peer.deviceId.take(6)
-                            onPair(peer.deviceId.take(6))
+                            SkiffBackgroundService.sendPairRequestById(peer.deviceId)
                         }
                 ) {
                     Row(

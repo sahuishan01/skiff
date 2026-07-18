@@ -44,6 +44,10 @@ impl SignalingState {
         self.code_mappings.read().await.get(code).cloned()
     }
 
+    pub async fn is_device_connected(&self, device_id: &str) -> bool {
+        self.active_connections.read().await.contains_key(device_id)
+    }
+
     pub async fn send_to_device(&self, device_id: &str, msg: WsMessage) -> bool {
         if let Some(tx) = self.active_connections.read().await.get(device_id) {
             if let Err(e) = tx.send(msg) {

@@ -68,6 +68,9 @@ pub enum WsMessage {
     RequestConnection {
         target_code: String,
     },
+    RequestConnectionById {
+        target_device_id: String,
+    },
     AcceptRequest {
         sender_device_id: String,
     },

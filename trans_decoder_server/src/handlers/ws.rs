@@ -166,6 +166,42 @@ async fn handle_socket(
                 }
             }
 
+            WsMessage::RequestConnectionById { target_device_id } => {
+                let sender_id = match &client_device_id {
+                    Some(id) => id,
+                    None => {
+                        let _ = tx.send(WsMessage::Error {
+                            message: "Unregistered device".to_string(),
+                        });
+                        continue;
+                    }
+                };
+
+                let sender_code = client_device_code.clone().unwrap_or_default();
+
+                if signaling.is_device_connected(&target_device_id).await {
+                    let routed = signaling
+                        .send_to_device(
+                            &target_device_id,
+                            WsMessage::IncomingRequest {
+                                sender_device_id: sender_id.clone(),
+                                sender_code,
+                            },
+                        )
+                        .await;
+
+                    if !routed {
+                        let _ = tx.send(WsMessage::RequestRejected {
+                            reason: "Target offline".to_string(),
+                        });
+                    }
+                } else {
+                    let _ = tx.send(WsMessage::RequestRejected {
+                        reason: "Target offline".to_string(),
+                    });
+                }
+            }
+
             WsMessage::AcceptRequest { sender_device_id } => {
                 let receiver_id = match &client_device_id {
                     Some(id) => id,
