@@ -89,6 +89,12 @@ class SkiffBackgroundService : Service() {
             webSocketClient?.sendMessage(WsMessage.RequestConnection(targetCode))
         }
 
+        fun sendPairRequestById(targetDeviceId: String) {
+            AppLogger.log("Sending pairing request to device ID: $targetDeviceId")
+            connectionStatus.value = "Connecting to $targetDeviceId..."
+            webSocketClient?.sendMessage(WsMessage.RequestConnectionById(target_device_id = targetDeviceId))
+        }
+
         fun acceptPairRequest(senderId: String) {
             AppLogger.log("Accepting pairing request from peer: $senderId")
             activePeerDeviceId.value = senderId

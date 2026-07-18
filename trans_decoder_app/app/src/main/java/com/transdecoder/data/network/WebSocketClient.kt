@@ -18,6 +18,10 @@ sealed class WsMessage {
     data class RequestConnection(val target_code: String) : WsMessage()
 
     @Serializable
+    @SerialName("REQUEST_CONNECTION_BY_ID")
+    data class RequestConnectionById(val target_device_id: String) : WsMessage()
+
+    @Serializable
     @SerialName("ACCEPT_REQUEST")
     data class AcceptRequest(val sender_device_id: String) : WsMessage()
 
