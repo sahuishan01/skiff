@@ -8,6 +8,7 @@ enum class TransferStatus {
     TRANSFERRING,
     COMPLETED,
     FAILED,
+    CANCELLED,
     PAUSED
 }
 

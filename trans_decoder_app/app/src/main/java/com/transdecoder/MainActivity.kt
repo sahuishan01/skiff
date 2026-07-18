@@ -13,6 +13,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -45,6 +47,7 @@ import com.transdecoder.data.local.KnownPeer
 import com.transdecoder.data.local.TransferDirection
 import com.transdecoder.data.local.TransferEntity
 import com.transdecoder.data.local.TransferStatus
+import com.transdecoder.ui.theme.PairCodeFont
 import com.transdecoder.data.network.FileMetadataInput
 import com.transdecoder.data.network.WsMessage
 import com.transdecoder.ui.theme.PairCodeFont
@@ -535,6 +538,7 @@ private fun ActionSection(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun PeersSection(
     peers: List<KnownPeer>,
@@ -543,6 +547,8 @@ private fun PeersSection(
     onPair: (String) -> Unit
 ) {
     if (peers.isEmpty()) return
+
+    var renameTarget by remember { mutableStateOf<KnownPeer?>(null) }
 
     Column(
         modifier = Modifier
@@ -582,7 +588,12 @@ private fun PeersSection(
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
+                        modifier = Modifier
+                            .padding(horizontal = 12.dp, vertical = 10.dp)
+                            .combinedClickable(
+                                onClick = {},
+                                onLongClick = { renameTarget = peer }
+                            )
                     ) {
                         Box(
                             modifier = Modifier
@@ -608,6 +619,59 @@ private fun PeersSection(
                 }
             }
         }
+    }
+
+    // Rename dialog
+    renameTarget?.let { peer ->
+        var newName by remember(peer) { mutableStateOf(peer.displayName) }
+        AlertDialog(
+            onDismissRequest = { renameTarget = null },
+            containerColor = MaterialTheme.colorScheme.surface,
+            shape = MaterialTheme.shapes.large,
+            title = {
+                Text("Rename Peer", style = MaterialTheme.typography.headlineMedium)
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        text = peer.deviceId.ifEmpty { peer.deviceId },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = SkiffColors.TextSecondary
+                    )
+                    OutlinedTextField(
+                        value = newName,
+                        onValueChange = { newName = it },
+                        label = { Text("Name") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = MaterialTheme.shapes.medium
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (newName.isNotBlank()) {
+                            val db = AppDatabase.getDatabase(
+                                SkiffBackgroundService.instance?.applicationContext ?: return@Button
+                            )
+                            CoroutineScope(Dispatchers.IO).launch {
+                                db.knownPeerDao().upsertPeer(peer.copy(displayName = newName.trim()))
+                            }
+                        }
+                        renameTarget = null
+                    },
+                    shape = MaterialTheme.shapes.medium
+                ) {
+                    Text("Save")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { renameTarget = null }) {
+                    Text("Cancel", color = SkiffColors.TextSecondary)
+                }
+            }
+        )
     }
 }
 
@@ -668,6 +732,7 @@ private fun TransferTimelineItem(transfer: TransferEntity) {
 
     val isCompleted = transfer.status == TransferStatus.COMPLETED
     val isFailed = transfer.status == TransferStatus.FAILED
+    val isCancelled = transfer.status == TransferStatus.CANCELLED
     val isOutgoing = transfer.direction == TransferDirection.SEND
     val isActive = transfer.status == TransferStatus.TRANSFERRING ||
             transfer.status == TransferStatus.PENDING
@@ -675,6 +740,7 @@ private fun TransferTimelineItem(transfer: TransferEntity) {
     val statusColor = when {
         isCompleted -> SkiffColors.Green
         isFailed -> SkiffColors.Coral
+        isCancelled -> SkiffColors.TextMuted
         else -> MaterialTheme.colorScheme.primary
     }
 
@@ -713,7 +779,11 @@ private fun TransferTimelineItem(transfer: TransferEntity) {
                 fontWeight = FontWeight.Medium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                color = if (isFailed) SkiffColors.Coral else MaterialTheme.colorScheme.onSurface
+                color = when {
+                    isFailed -> SkiffColors.Coral
+                    isCancelled -> SkiffColors.TextSecondary
+                    else -> MaterialTheme.colorScheme.onSurface
+                }
             )
 
             Spacer(modifier = Modifier.height(4.dp))
@@ -745,6 +815,7 @@ private fun TransferTimelineItem(transfer: TransferEntity) {
                     text = when {
                         isCompleted -> "Complete"
                         isFailed -> "Failed"
+                        isCancelled -> "Cancelled"
                         transfer.status == TransferStatus.TRANSFERRING -> "${(progress * 100).toInt()}%"
                         transfer.status == TransferStatus.PENDING -> "Waiting..."
                         else -> "${(progress * 100).toInt()}%"
@@ -756,7 +827,7 @@ private fun TransferTimelineItem(transfer: TransferEntity) {
             }
         }
 
-        // Completion checkmark
+        // Completion checkmark or cancel button
         if (isCompleted) {
             Icon(
                 imageVector = Icons.Default.CheckCircle,
@@ -764,6 +835,24 @@ private fun TransferTimelineItem(transfer: TransferEntity) {
                 tint = SkiffColors.Green,
                 modifier = Modifier.size(22.dp)
             )
+        } else if (isActive) {
+            IconButton(
+                onClick = {
+                    SkiffBackgroundService.cancelTransfer(
+                        SkiffBackgroundService.instance ?: return@IconButton,
+                        transfer.fileId,
+                        transfer.direction
+                    )
+                },
+                modifier = Modifier.size(32.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = "Cancel transfer",
+                    tint = SkiffColors.TextMuted,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
         }
     }
 }

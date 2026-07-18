@@ -286,6 +286,25 @@ class SkiffBackgroundService : Service() {
             }
         }
 
+        fun cancelTransfer(context: Context, fileId: String, direction: TransferDirection) {
+            AppLogger.log("Cancelling transfer for file $fileId")
+            val dbInstance = AppDatabase.getDatabase(context)
+
+            CoroutineScope(Dispatchers.IO).launch {
+                dbInstance.transferDao().updateProgress(fileId, direction, 0L, TransferStatus.CANCELLED)
+                if (direction == TransferDirection.SEND) {
+                    webSocketClient?.sendMessage(
+                        WsMessage.UpdateProgress(
+                            file_id = fileId,
+                            bytes_transferred = 0L,
+                            status = "cancelled"
+                        )
+                    )
+                }
+                AppLogger.log("Transfer cancelled: $fileId")
+            }
+        }
+
         fun downloadFileRelay(context: Context, fileId: String) {
             val dbInstance = AppDatabase.getDatabase(context)
             AppLogger.log("Relay: Initiating download for file $fileId...")
@@ -631,12 +650,17 @@ class SkiffBackgroundService : Service() {
                 }
             }
             is WsMessage.ProgressUpdated -> {
-                // Receiver side: update incoming file bytes dynamically as received
                 serviceScope.launch(Dispatchers.IO) {
                     val status = db.transferDao().getTransferByIdAndDirection(message.file_id, TransferDirection.RECEIVE)?.let {
                         if (message.bytes_transferred >= it.fileSize) TransferStatus.COMPLETED else TransferStatus.TRANSFERRING
                     } ?: TransferStatus.TRANSFERRING
                     db.transferDao().updateProgress(message.file_id, TransferDirection.RECEIVE, message.bytes_transferred, status)
+                }
+            }
+            is WsMessage.TransferCancelled -> {
+                AppLogger.log("Receiver: Transfer cancelled by sender for file ${message.file_id}")
+                serviceScope.launch(Dispatchers.IO) {
+                    db.transferDao().updateProgress(message.file_id, TransferDirection.RECEIVE, 0L, TransferStatus.CANCELLED)
                 }
             }
             else -> {}
