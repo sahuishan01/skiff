@@ -61,10 +61,10 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: v0.0.23
-          name: Release v0.0.23
+          tag_name: v0.0.24
+          name: Release v0.0.24
           draft: false
           prerelease: false
           files: |
-            trans_decoder_app/app/build/outputs/apk/release/skiff-0.0.23.apk
+            trans_decoder_app/app/build/outputs/apk/release/skiff-0.0.24.apk
           token: ${{ secrets.GITHUB_TOKEN }}
