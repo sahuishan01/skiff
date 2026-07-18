@@ -584,18 +584,18 @@ class SkiffBackgroundService : Service() {
                                 }
                             }
 
-                            if (destinationPath == null) {
+                            val savePath: String = destinationPath ?: run {
                                 val downloadsDir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: filesDir
                                 val localFile = File(downloadsDir, file.file_name)
-                                destinationPath = localFile.absolutePath
-                                AppLogger.log("Default save location resolved: $destinationPath")
+                                AppLogger.log("Default save location resolved: ${localFile.absolutePath}")
+                                localFile.absolutePath
                             }
 
                             val newRecord = TransferEntity(
                                 fileId = file.file_id,
                                 sessionId = message.session_id,
                                 fileName = file.file_name,
-                                filePath = destinationPath,
+                                filePath = savePath,
                                 fileSize = file.file_size,
                                 fileHash = file.file_hash,
                                 bytesTransferred = 0L,
