@@ -13,8 +13,8 @@ android {
         applicationId = "com.transdecoder"
         minSdk = 24
         targetSdk = 34
-        versionCode = 21
-        versionName = "0.0.21"
+        versionCode = 22
+        versionName = "0.0.22"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -69,6 +69,7 @@ dependencies {
     implementation("androidx.compose.ui:ui-graphics:1.5.4")
     implementation("androidx.compose.ui:ui-tooling-preview:1.5.4")
     implementation("androidx.compose.material3:material3:1.1.2")
+    implementation("androidx.documentfile:documentfile:1.0.1")
     
     // Room Database
     val roomVersion = "2.6.1"
