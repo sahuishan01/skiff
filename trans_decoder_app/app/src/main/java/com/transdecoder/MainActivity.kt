@@ -200,7 +200,8 @@ class MainActivity : ComponentActivity() {
 
                             TransferListSection(
                                 transfers = transfers,
-                                isPaired = activePeerDeviceId != null
+                                isPaired = activePeerDeviceId != null,
+                                modifier = Modifier.weight(1f)
                             )
                         }
                     }
@@ -519,46 +520,47 @@ private fun ActionSection(
 @Composable
 private fun TransferListSection(
     transfers: List<TransferEntity>,
-    isPaired: Boolean
+    isPaired: Boolean,
+    modifier: Modifier = Modifier
 ) {
-    Text(
-        text = "Transfers",
-        style = MaterialTheme.typography.labelLarge,
-        color = SkiffColors.TextSecondary,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp)
-            .padding(top = 8.dp, bottom = 4.dp)
-    )
+    Column(modifier = modifier) {
+        Text(
+            text = "Transfers",
+            style = MaterialTheme.typography.labelLarge,
+            color = SkiffColors.TextSecondary,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .padding(top = 8.dp, bottom = 4.dp)
+        )
 
-    if (transfers.isEmpty()) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = if (isPaired)
-                    "Select files to send or wait for transfers"
-                else
-                    "Pair a device to start sharing",
-                style = MaterialTheme.typography.bodyMedium,
-                color = SkiffColors.TextMuted,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.padding(32.dp)
-            )
-        }
-    } else {
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f),
-            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            items(transfers, key = { it.fileId }) { transfer ->
-                TransferTimelineItem(transfer = transfer)
+        if (transfers.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = if (isPaired)
+                        "Select files to send or wait for transfers"
+                    else
+                        "Pair a device to start sharing",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = SkiffColors.TextMuted,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(32.dp)
+                )
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize(),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                items(transfers, key = { it.fileId }) { transfer ->
+                    TransferTimelineItem(transfer = transfer)
+                }
             }
         }
     }
