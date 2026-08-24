@@ -38,13 +38,10 @@ jobs:
           ./gradlew assembleRelease > ../build.log 2>&1
           
           # Extract version name from build.gradle.kts
-          VERSION=$(grep 'versionName' app/build.gradle.kts | sed 's/.*"\(.*\)".*/\1/')
-          echo "APK version: $VERSION"
-          
-          # Find compiled release APK and rename to skiff-{version}.apk
-          mkdir -p app/build/outputs/apk/release
-          find app/build/outputs/apk/ -name "*.apk" -exec cp {} "app/build/outputs/apk/release/skiff-${VERSION}.apk" \;
+          VERSION=$(grep 'versionName' app/build.gradle.kts | head -n 1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
           echo "APK_FILE=skiff-${VERSION}.apk" >> $GITHUB_ENV
+          echo "APK version: $VERSION"
 
       - name: Push Build Log on Failure
         if: failure()
