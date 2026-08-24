@@ -977,6 +977,7 @@ private fun SettingsDialog(
                 Divider(color = SkiffColors.Border, thickness = 1.dp)
 
                 // Debug logs section
+                val context = androidx.compose.ui.platform.LocalContext.current
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -987,10 +988,22 @@ private fun SettingsDialog(
                             text = "Debug Logs",
                             style = MaterialTheme.typography.titleMedium
                         )
-                        TextButton(onClick = { showDebugLogs = !showDebugLogs }) {
-                            Text(
-                                if (showDebugLogs) "Hide" else "Show (${AppLogger.logHistory.size})"
-                            )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (showDebugLogs && AppLogger.logHistory.isNotEmpty()) {
+                                TextButton(onClick = {
+                                    val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                                    val clip = android.content.ClipData.newPlainText("Skiff Logs", AppLogger.logHistory.joinToString("\n"))
+                                    clipboard.setPrimaryClip(clip)
+                                    Toast.makeText(context, "Logs copied to clipboard", Toast.LENGTH_SHORT).show()
+                                }) {
+                                    Text("Copy")
+                                }
+                            }
+                            TextButton(onClick = { showDebugLogs = !showDebugLogs }) {
+                                Text(
+                                    if (showDebugLogs) "Hide" else "Show (${AppLogger.logHistory.size})"
+                                )
+                            }
                         }
                     }
                     if (showDebugLogs) {
