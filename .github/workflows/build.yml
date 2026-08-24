@@ -43,6 +43,10 @@ jobs:
           echo "APK_FILE=skiff-${VERSION}.apk" >> $GITHUB_ENV
           echo "APK version: $VERSION"
 
+          # Copy compiled APK to target release path
+          mkdir -p app/build/outputs/apk/release
+          find app/build/outputs/apk/ -name "*.apk" -exec cp {} "app/build/outputs/apk/release/skiff-${VERSION}.apk" \;
+
       - name: Push Build Log on Failure
         if: failure()
         run: |
