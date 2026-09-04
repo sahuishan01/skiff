@@ -29,7 +29,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.filled.PowerSettingsNew
+import androidx.compose.material.icons.filled.ExitToApp
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -385,7 +385,7 @@ private fun SkiffTopBar(
             }
             IconButton(onClick = onShutdown) {
                 Icon(
-                    imageVector = Icons.Default.PowerSettingsNew,
+                    imageVector = Icons.Default.ExitToApp,
                     contentDescription = "Shutdown",
                     tint = SkiffColors.Coral
                 )
