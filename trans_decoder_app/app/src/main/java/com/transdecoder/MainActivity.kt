@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -112,6 +113,7 @@ class MainActivity : ComponentActivity() {
                     .collectAsState(initial = emptyList())
 
                 var showSettings by remember { mutableStateOf(false) }
+                var showShutdownConfirm by remember { mutableStateOf(false) }
 
                 // Reset pairing loading state when connection status resolves
                 LaunchedEffect(connectionStatus) {
@@ -171,6 +173,7 @@ class MainActivity : ComponentActivity() {
                                 onReconnect = {
                                     SkiffBackgroundService.reconnect(this@MainActivity)
                                 },
+                                onShutdown = { showShutdownConfirm = true },
                                 onSettings = { showSettings = true }
                             )
                         }
@@ -244,6 +247,18 @@ class MainActivity : ComponentActivity() {
                                 AppLogger.log("Reset save location to Downloads default")
                             },
                             onDismiss = { showSettings = false }
+                        )
+                    }
+
+                    // ── Shutdown Confirmation Dialog ──────────────────────────
+                    if (showShutdownConfirm) {
+                        ShutdownConfirmDialog(
+                            onConfirm = {
+                                showShutdownConfirm = false
+                                SkiffBackgroundService.shutdown(this@MainActivity)
+                                finishAndRemoveTask()
+                            },
+                            onDismiss = { showShutdownConfirm = false }
                         )
                     }
                 }
@@ -331,6 +346,7 @@ class MainActivity : ComponentActivity() {
 private fun SkiffTopBar(
     connectionStatus: String,
     onReconnect: () -> Unit,
+    onShutdown: () -> Unit,
     onSettings: () -> Unit
 ) {
     val statusColor = when (connectionStatus) {
@@ -365,6 +381,13 @@ private fun SkiffTopBar(
                     imageVector = Icons.Default.Refresh,
                     contentDescription = "Reconnect",
                     tint = SkiffColors.TextSecondary
+                )
+            }
+            IconButton(onClick = onShutdown) {
+                Icon(
+                    imageVector = Icons.Default.PowerSettingsNew,
+                    contentDescription = "Shutdown",
+                    tint = SkiffColors.Coral
                 )
             }
             IconButton(onClick = onSettings) {
@@ -1035,6 +1058,53 @@ private fun SettingsDialog(
         confirmButton = {
             TextButton(onClick = onDismiss) {
                 Text("Done", color = MaterialTheme.colorScheme.primary)
+            }
+        }
+    )
+}
+
+@Composable
+private fun ShutdownConfirmDialog(
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
+        shape = MaterialTheme.shapes.large,
+        title = {
+            Text(
+                text = "Shutdown Skiff",
+                style = MaterialTheme.typography.headlineMedium
+            )
+        },
+        text = {
+            Text(
+                text = "Are you sure you want to stop background P2P sync and exit the app?",
+                style = MaterialTheme.typography.bodyMedium,
+                color = SkiffColors.TextSecondary
+            )
+        },
+        confirmButton = {
+            Button(
+                onClick = onConfirm,
+                shape = MaterialTheme.shapes.medium,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = SkiffColors.Coral
+                )
+            ) {
+                Text("Shutdown")
+            }
+        },
+        dismissButton = {
+            OutlinedButton(
+                onClick = onDismiss,
+                shape = MaterialTheme.shapes.medium,
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = SkiffColors.TextSecondary
+                )
+            ) {
+                Text("Cancel")
             }
         }
     )
