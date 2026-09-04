@@ -64,6 +64,28 @@ class SkiffBackgroundService : Service() {
         var peerIpAddress: String? = null
         var instance: SkiffBackgroundService? = null
 
+        fun shutdown(context: Context) {
+            AppLogger.log("Shutting down Skiff P2P Service...")
+            connectionStatus.value = "Disconnected"
+            activePeerDeviceId.value = null
+            activeIncomingRequest.value = null
+            webSocketClient?.disconnect()
+            webSocketClient = null
+            val service = instance
+            if (service != null) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    service.stopForeground(Service.STOP_FOREGROUND_REMOVE)
+                } else {
+                    @Suppress("DEPRECATION")
+                    service.stopForeground(true)
+                }
+                service.stopSelf()
+            } else {
+                val intent = Intent(context, SkiffBackgroundService::class.java)
+                context.stopService(intent)
+            }
+        }
+
         fun reconnect(context: Context) {
             AppLogger.log("Initiating manual refresh/reconnection...")
             connectionStatus.value = "Connecting..."
