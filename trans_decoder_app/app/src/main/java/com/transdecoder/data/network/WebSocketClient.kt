@@ -110,6 +110,31 @@ sealed class WsMessage {
     @Serializable
     @SerialName("TRANSFER_CANCELLED")
     data class TransferCancelled(val file_id: String) : WsMessage()
+
+    @Serializable
+    @SerialName("SEND_CHAT")
+    data class SendChat(
+        val message_id: String,
+        val receiver_device_id: String,
+        val content: String
+    ) : WsMessage()
+
+    @Serializable
+    @SerialName("CHAT_RECEIVED")
+    data class ChatReceived(
+        val message_id: String,
+        val sender_device_id: String,
+        val content: String,
+        val created_at: String
+    ) : WsMessage()
+
+    @Serializable
+    @SerialName("CHAT_DELIVERED")
+    data class ChatDelivered(val message_id: String) : WsMessage()
+
+    @Serializable
+    @SerialName("ERROR")
+    data class Error(val message: String) : WsMessage()
 }
 
 @Serializable
