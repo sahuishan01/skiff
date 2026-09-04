@@ -38,3 +38,13 @@ data class KnownPeer(
     val displayName: String = "",
     val lastConnectedAt: Long = System.currentTimeMillis()
 )
+
+@Entity(tableName = "chat_messages")
+data class ChatEntity(
+    @PrimaryKey val messageId: String,
+    val peerDeviceId: String, // The recipient for SENT messages, or sender for RECEIVED messages
+    val isFromMe: Boolean,
+    val content: String,
+    val isDelivered: Boolean = false,
+    val timestamp: Long = System.currentTimeMillis()
+)
