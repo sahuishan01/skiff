@@ -94,6 +94,11 @@ pub enum WsMessage {
         bytes_transferred: i64,
         status: FileStatus,
     },
+    SendChat {
+        message_id: Uuid,
+        receiver_device_id: String,
+        content: String,
+    },
     
     // Server -> Client
     Registered {
@@ -126,9 +131,29 @@ pub enum WsMessage {
         file_id: Uuid,
         bytes_transferred: i64,
     },
+    ChatReceived {
+        message_id: Uuid,
+        sender_device_id: String,
+        content: String,
+        created_at: DateTime<Utc>,
+    },
+    ChatDelivered {
+        message_id: Uuid,
+    },
     Error {
         message: String,
     },
+}
+
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow, Clone)]
+pub struct ChatMessage {
+    pub message_id: Uuid,
+    pub sender_device_id: String,
+    pub receiver_device_id: String,
+    pub content: String,
+    pub status: String,
+    pub created_at: DateTime<Utc>,
+    pub delivered_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

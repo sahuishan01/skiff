@@ -114,18 +114,114 @@ async fn handle_socket(
                         client_device_code = Some(final_code.clone());
 
                         signaling
-                            .register_device(device_id, final_code.clone(), tx.clone())
+                            .register_device(device_id.clone(), final_code.clone(), tx.clone())
                             .await;
 
                         let _ = tx.send(WsMessage::Registered {
                             device_code: final_code,
                         });
+
+                        // Deliver pending chat messages stored in server PostgreSQL DB
+                        let pending_chats = sqlx::query!(
+                            "SELECT message_id, sender_device_id, content, created_at
+                             FROM chat_messages
+                             WHERE receiver_device_id = $1 AND status = 'PENDING'
+                             ORDER BY created_at ASC",
+                            device_id
+                        )
+                        .fetch_all(&pool)
+                        .await;
+
+                        if let Ok(chats) = pending_chats {
+                            for chat in chats {
+                                let _ = tx.send(WsMessage::ChatReceived {
+                                    message_id: chat.message_id,
+                                    sender_device_id: chat.sender_device_id,
+                                    content: chat.content,
+                                    created_at: chat.created_at,
+                                });
+
+                                let _ = sqlx::query!(
+                                    "UPDATE chat_messages SET status = 'DELIVERED', delivered_at = NOW() WHERE message_id = $1",
+                                    chat.message_id
+                                )
+                                .execute(&pool)
+                                .await;
+                            }
+                        }
                     }
                     Err(e) => {
                         error!("Failed to register device in database: {}", e);
                         let _ = tx.send(WsMessage::Error {
                             message: "Database registration failure".to_string(),
                         });
+                    }
+                }
+            }
+
+            WsMessage::SendChat {
+                message_id,
+                receiver_device_id,
+                content,
+            } => {
+                let sender_id = match &client_device_id {
+                    Some(id) => id,
+                    None => {
+                        let _ = tx.send(WsMessage::Error {
+                            message: "Unregistered device".to_string(),
+                        });
+                        continue;
+                    }
+                };
+
+                let is_receiver_online = signaling.is_device_connected(&receiver_device_id).await;
+                let initial_status = if is_receiver_online { "DELIVERED" } else { "PENDING" };
+
+                // Save message into DB
+                let save_res = sqlx::query!(
+                    "INSERT INTO chat_messages (message_id, sender_device_id, receiver_device_id, content, status, delivered_at)
+                     VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT DO NOTHING",
+                    message_id,
+                    sender_id,
+                    receiver_device_id,
+                    content,
+                    initial_status,
+                    if is_receiver_online { Some(chrono::Utc::now()) } else { None }
+                )
+                .execute(&pool)
+                .await;
+
+                if let Err(e) = save_res {
+                    error!("Failed to store chat message: {}", e);
+                    let _ = tx.send(WsMessage::Error {
+                        message: "Failed to store chat message".to_string(),
+                    });
+                    continue;
+                }
+
+                if is_receiver_online {
+                    let delivered = signaling
+                        .send_to_device(
+                            &receiver_device_id,
+                            WsMessage::ChatReceived {
+                                message_id,
+                                sender_device_id: sender_id.clone(),
+                                content: content.clone(),
+                                created_at: chrono::Utc::now(),
+                            },
+                        )
+                        .await;
+
+                    if delivered {
+                        let _ = tx.send(WsMessage::ChatDelivered { message_id });
+                    } else {
+                        // Mark as PENDING if websocket send failed
+                        let _ = sqlx::query!(
+                            "UPDATE chat_messages SET status = 'PENDING', delivered_at = NULL WHERE message_id = $1",
+                            message_id
+                        )
+                        .execute(&pool)
+                        .await;
                     }
                 }
             }
@@ -261,6 +357,14 @@ async fn handle_socket(
                     Some(id) => id,
                     None => continue,
                 };
+
+                // Requirement: Media transfer allowed ONLY if recipient is actively connected
+                if !signaling.is_device_connected(&receiver_device_id).await {
+                    let _ = tx.send(WsMessage::Error {
+                        message: "Target device is offline. Media transfer requires both devices to be online.".to_string(),
+                    });
+                    continue;
+                }
 
                 // Create transfer session in PostgreSQL
                 let session_res = sqlx::query!(
