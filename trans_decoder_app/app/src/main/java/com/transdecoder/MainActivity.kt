@@ -215,6 +215,36 @@ class MainActivity : ComponentActivity() {
                                 activePeerId = activePeerDeviceId
                             )
 
+                            // Chat UI Section when paired with active peer
+                            activePeerDeviceId?.let { peerId ->
+                                var showChat by remember { mutableStateOf(false) }
+                                val peerName = knownPeers.find { it.deviceId == peerId }?.displayName?.ifEmpty { peerId.take(8) } ?: peerId.take(8)
+                                val chatMessages by db.chatDao().getChatMessagesForPeerFlow(peerId).collectAsState(initial = emptyList())
+
+                                Button(
+                                    onClick = { showChat = true },
+                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                                    shape = MaterialTheme.shapes.medium
+                                ) {
+                                    Text("💬 Chat with $peerName", fontWeight = FontWeight.SemiBold)
+                                }
+
+                                if (showChat) {
+                                    ChatBottomSheet(
+                                        peerId = peerId,
+                                        peerName = peerName,
+                                        messages = chatMessages,
+                                        onSendMessage = { text ->
+                                            SkiffBackgroundService.sendChatMessage(peerId, text)
+                                        },
+                                        onDismiss = { showChat = false }
+                                    )
+                                }
+                            }
+
                             TransferListSection(
                                 transfers = transfers,
                                 isPaired = activePeerDeviceId != null,
@@ -1118,5 +1148,111 @@ fun formatBytes(bytes: Long): String {
         bytes >= 1024 * 1024 -> String.format("%.1fMB", bytes / (1024.0 * 1024.0))
         bytes >= 1024 -> String.format("%.1fKB", bytes / 1024.0)
         else -> "${bytes}B"
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ChatBottomSheet(
+    peerId: String,
+    peerName: String,
+    messages: List<com.transdecoder.data.local.ChatEntity>,
+    onSendMessage: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var inputText by remember { mutableStateOf("") }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
+        scrimColor = MaterialTheme.colorScheme.scrim.copy(alpha = 0.5f)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .fillMaxHeight(0.75f)
+                .padding(16.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
+            ) {
+                Text(
+                    text = "Chat with $peerName",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
+                )
+                IconButton(onClick = onDismiss) {
+                    Icon(Icons.Default.Close, contentDescription = "Close")
+                }
+            }
+
+            LazyColumn(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(messages) { msg ->
+                    val isMe = msg.isFromMe
+                    Box(
+                        modifier = Modifier.fillMaxWidth(),
+                        contentAlignment = if (isMe) Alignment.CenterEnd else Alignment.CenterStart
+                    ) {
+                        Surface(
+                            shape = MaterialTheme.shapes.medium,
+                            color = if (isMe) MaterialTheme.colorScheme.primary else SkiffColors.SurfaceElevated,
+                            modifier = Modifier.widthIn(max = 280.dp)
+                        ) {
+                            Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                                Text(
+                                    text = msg.content,
+                                    color = if (isMe) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                if (isMe) {
+                                    Text(
+                                        text = if (msg.isDelivered) "✓ Delivered" else "⏳ Sent",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.7f),
+                                        modifier = Modifier.align(Alignment.End)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                OutlinedTextField(
+                    value = inputText,
+                    onValueChange = { inputText = it },
+                    placeholder = { Text("Type message...") },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    shape = MaterialTheme.shapes.medium
+                )
+                Button(
+                    onClick = {
+                        if (inputText.isNotBlank()) {
+                            onSendMessage(inputText.trim())
+                            inputText = ""
+                        }
+                    },
+                    enabled = inputText.isNotBlank(),
+                    shape = MaterialTheme.shapes.medium
+                ) {
+                    Text("Send")
+                }
+            }
+        }
     }
 }

@@ -141,6 +141,32 @@ class SkiffBackgroundService : Service() {
             }
         }
 
+        fun sendChatMessage(targetDeviceId: String, content: String) {
+            val messageId = UUID.randomUUID().toString()
+            AppLogger.log("Sending chat message to $targetDeviceId: $content")
+            instance?.let { svc ->
+                CoroutineScope(Dispatchers.IO).launch {
+                    val appDb = AppDatabase.getDatabase(svc)
+                    appDb.chatDao().insertMessage(
+                        com.transdecoder.data.local.ChatEntity(
+                            messageId = messageId,
+                            peerDeviceId = targetDeviceId,
+                            isFromMe = true,
+                            content = content,
+                            isDelivered = false
+                        )
+                    )
+                }
+            }
+            webSocketClient?.sendMessage(
+                WsMessage.SendChat(
+                    message_id = messageId,
+                    receiver_device_id = targetDeviceId,
+                    content = content
+                )
+            )
+        }
+
         fun rejectPairRequest(senderId: String) {
             AppLogger.log("Rejecting pairing request from peer: $senderId")
             webSocketClient?.sendMessage(WsMessage.RejectRequest(senderId))
@@ -694,6 +720,26 @@ class SkiffBackgroundService : Service() {
                 AppLogger.log("Receiver: Transfer cancelled by sender for file ${message.file_id}")
                 serviceScope.launch(Dispatchers.IO) {
                     db.transferDao().updateProgress(message.file_id, TransferDirection.RECEIVE, 0L, TransferStatus.CANCELLED)
+                }
+            }
+            is WsMessage.ChatReceived -> {
+                AppLogger.log("Received chat message from ${message.sender_device_id}: ${message.content}")
+                serviceScope.launch(Dispatchers.IO) {
+                    db.chatDao().insertMessage(
+                        com.transdecoder.data.local.ChatEntity(
+                            messageId = message.message_id,
+                            peerDeviceId = message.sender_device_id,
+                            isFromMe = false,
+                            content = message.content,
+                            isDelivered = true
+                        )
+                    )
+                }
+            }
+            is WsMessage.ChatDelivered -> {
+                AppLogger.log("Chat message delivered: ${message.message_id}")
+                serviceScope.launch(Dispatchers.IO) {
+                    db.chatDao().markDelivered(message.message_id)
                 }
             }
             else -> {}

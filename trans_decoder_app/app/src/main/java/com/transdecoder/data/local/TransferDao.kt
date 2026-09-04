@@ -51,3 +51,18 @@ interface KnownPeerDao {
     @Delete
     suspend fun deletePeer(peer: KnownPeer)
 }
+
+@Dao
+interface ChatDao {
+    @Query("SELECT * FROM chat_messages WHERE peerDeviceId = :peerDeviceId ORDER BY timestamp ASC")
+    fun getChatMessagesForPeerFlow(peerDeviceId: String): Flow<List<ChatEntity>>
+
+    @Query("SELECT * FROM chat_messages WHERE peerDeviceId = :peerDeviceId ORDER BY timestamp ASC")
+    suspend fun getChatMessagesForPeer(peerDeviceId: String): List<ChatEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertMessage(message: ChatEntity)
+
+    @Query("UPDATE chat_messages SET isDelivered = 1 WHERE messageId = :messageId")
+    suspend fun markDelivered(messageId: String)
+}
