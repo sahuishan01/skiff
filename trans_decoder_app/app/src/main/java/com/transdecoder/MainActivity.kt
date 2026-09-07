@@ -140,6 +140,9 @@ class MainActivity : ComponentActivity() {
                 val customSavePathState = remember {
                     mutableStateOf(prefs.getString("custom_save_path_uri", null))
                 }
+                val customServerHostState = remember {
+                    mutableStateOf(prefs.getString(Config.PREF_KEY_SERVER_HOST, null))
+                }
 
                 val folderPickerLauncher = rememberLauncherForActivityResult(
                     contract = ActivityResultContracts.OpenDocumentTree()
@@ -275,6 +278,19 @@ class MainActivity : ComponentActivity() {
                                 prefs.edit().remove("custom_save_path_uri").apply()
                                 customSavePathState.value = null
                                 AppLogger.log("Reset save location to Downloads default")
+                            },
+                            customServerHost = customServerHostState.value,
+                            onSaveServerHost = { newHost ->
+                                Config.setServerHost(this@MainActivity, newHost)
+                                customServerHostState.value = prefs.getString(Config.PREF_KEY_SERVER_HOST, null)
+                                Toast.makeText(this@MainActivity, "Server updated. Reconnecting...", Toast.LENGTH_SHORT).show()
+                                SkiffBackgroundService.reconnect(this@MainActivity)
+                            },
+                            onResetServerHost = {
+                                Config.setServerHost(this@MainActivity, null)
+                                customServerHostState.value = null
+                                Toast.makeText(this@MainActivity, "Server reset to default. Reconnecting...", Toast.LENGTH_SHORT).show()
+                                SkiffBackgroundService.reconnect(this@MainActivity)
                             },
                             onDismiss = { showSettings = false }
                         )
@@ -978,9 +994,15 @@ private fun SettingsDialog(
     customSavePathUri: String?,
     onChangeSaveLocation: () -> Unit,
     onResetSaveLocation: () -> Unit,
+    customServerHost: String?,
+    onSaveServerHost: (String) -> Unit,
+    onResetServerHost: () -> Unit,
     onDismiss: () -> Unit
 ) {
     var showDebugLogs by remember { mutableStateOf(false) }
+    var serverHostInput by remember(customServerHost) {
+        mutableStateOf(customServerHost ?: Config.DEFAULT_SERVER_HOST)
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -993,7 +1015,61 @@ private fun SettingsDialog(
             )
         },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                // Backend Server Host section
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "Backend Server (Signaling / Relay)",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Text(
+                        text = if (customServerHost != null) {
+                            "Self-hosted server active"
+                        } else {
+                            "Default (${Config.DEFAULT_SERVER_HOST})"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (customServerHost != null) MaterialTheme.colorScheme.primary else SkiffColors.TextSecondary
+                    )
+                    OutlinedTextField(
+                        value = serverHostInput,
+                        onValueChange = { serverHostInput = it },
+                        label = { Text("Server Host / URL") },
+                        placeholder = { Text("e.g. skiff.example.com:8443") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = MaterialTheme.shapes.medium
+                    )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = { onSaveServerHost(serverHostInput) },
+                            enabled = serverHostInput.isNotBlank() && Config.getCleanHost(serverHostInput) != (customServerHost ?: Config.DEFAULT_SERVER_HOST),
+                            modifier = Modifier.weight(1f),
+                            shape = MaterialTheme.shapes.medium
+                        ) {
+                            Text("Save Server")
+                        }
+                        if (customServerHost != null) {
+                            OutlinedButton(
+                                onClick = {
+                                    serverHostInput = Config.DEFAULT_SERVER_HOST
+                                    onResetServerHost()
+                                },
+                                shape = MaterialTheme.shapes.medium
+                            ) {
+                                Text("Reset")
+                            }
+                        }
+                    }
+                }
+
+                Divider(color = SkiffColors.Border, thickness = 1.dp)
+
                 // Save location section
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
