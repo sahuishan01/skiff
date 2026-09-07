@@ -275,7 +275,7 @@ class SkiffBackgroundService : Service() {
 
             CoroutineScope(Dispatchers.IO).launch {
                 val record = dbInstance.transferDao().getTransferByIdAndDirection(fileId, TransferDirection.SEND) ?: return@launch
-                val url = "${Config.API_SERVER_URL}/api/relay/upload/$fileId"
+                val url = "${Config.getApiUrl(context)}/api/relay/upload/$fileId"
 
                 val requestBody = object : okhttp3.RequestBody() {
                     override fun contentType(): okhttp3.MediaType? {
@@ -368,7 +368,7 @@ class SkiffBackgroundService : Service() {
 
             CoroutineScope(Dispatchers.IO).launch {
                 val record = dbInstance.transferDao().getTransferByIdAndDirection(fileId, TransferDirection.RECEIVE) ?: return@launch
-                val url = "${Config.API_SERVER_URL}/api/relay/download/$fileId"
+                val url = "${Config.getApiUrl(context)}/api/relay/download/$fileId"
 
                 val request = okhttp3.Request.Builder()
                     .url(url)
@@ -470,9 +470,10 @@ class SkiffBackgroundService : Service() {
         }
         val deviceId = id!!
 
-        AppLogger.log("Initializing WebSocket Client to ${Config.SIGNALING_SERVER_URL}...")
+        val signalingUrl = Config.getSignalingUrl(this)
+        AppLogger.log("Initializing WebSocket Client to $signalingUrl...")
         webSocketClient = WebSocketClient(
-            serverUrl = Config.SIGNALING_SERVER_URL,
+            serverUrl = signalingUrl,
             onMessageReceived = { message ->
                 serviceScope.launch(Dispatchers.Main) {
                     handleMessage(message)
