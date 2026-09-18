@@ -90,85 +90,110 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        // Start foreground background service
-        val serviceIntent = Intent(this, SkiffBackgroundService::class.java)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(serviceIntent)
-        } else {
-            startService(serviceIntent)
+        // Only start background service if folder is configured and valid
+        if (StorageUtils.isFolderSelectedAndValid(this)) {
+            val serviceIntent = Intent(this, SkiffBackgroundService::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(serviceIntent)
+            } else {
+                startService(serviceIntent)
+            }
         }
 
         setContent {
             SkiffTheme {
-                val deviceCode by SkiffBackgroundService.deviceCode.collectAsState()
-                val connectionStatus by SkiffBackgroundService.connectionStatus.collectAsState()
-                val activeIncomingRequest by SkiffBackgroundService.activeIncomingRequest.collectAsState()
-                val activePeerDeviceId by SkiffBackgroundService.activePeerDeviceId.collectAsState()
-
-                val peerCodeInput = remember { mutableStateOf("") }
-                val isPairing = remember { mutableStateOf(false) }
-                val transfers by db.transferDao().getAllTransfersFlow()
-                    .collectAsState(initial = emptyList())
-                val knownPeers by db.knownPeerDao().getAllPeersFlow()
-                    .collectAsState(initial = emptyList())
-
-                var showSettings by remember { mutableStateOf(false) }
-                var showShutdownConfirm by remember { mutableStateOf(false) }
-
-                // Reset pairing loading state when connection status resolves
-                LaunchedEffect(connectionStatus) {
-                    if (connectionStatus in listOf("Paired & Connected", "Pairing Rejected", "Registered & Waiting")) {
-                        isPairing.value = false
-                    }
+                val isFolderConfigured = remember {
+                    mutableStateOf(StorageUtils.isFolderSelectedAndValid(this@MainActivity))
                 }
-
-                // File picker
-                val filePickerLauncher = rememberLauncherForActivityResult(
-                    contract = ActivityResultContracts.GetMultipleContents()
-                ) { uris: List<Uri> ->
-                    val peerId = activePeerDeviceId
-                    if (uris.isNotEmpty() && peerId != null) {
-                        sendFiles(uris, peerId, transfers.firstOrNull()?.sessionId
-                            ?: UUID.randomUUID().toString())
-                    }
+                val customSavePathState = remember {
+                    mutableStateOf(StorageUtils.getFolderDisplayName(this@MainActivity))
                 }
-
-                // Custom save folder preference
                 val prefs = remember {
                     getSharedPreferences("skiff_prefs", MODE_PRIVATE)
                 }
-                val customSavePathState = remember {
-                    mutableStateOf(prefs.getString("custom_save_path_uri", null))
-                }
                 val customServerHostState = remember {
                     mutableStateOf(prefs.getString(Config.PREF_KEY_SERVER_HOST, null))
+                }
+
+                fun startServiceIfNeeded() {
+                    val serviceIntent = Intent(this@MainActivity, SkiffBackgroundService::class.java)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        startForegroundService(serviceIntent)
+                    } else {
+                        startService(serviceIntent)
+                    }
                 }
 
                 val folderPickerLauncher = rememberLauncherForActivityResult(
                     contract = ActivityResultContracts.OpenDocumentTree()
                 ) { uri: Uri? ->
                     if (uri != null) {
-                        try {
-                            contentResolver.takePersistableUriPermission(
-                                uri,
-                                Intent.FLAG_GRANT_READ_URI_PERMISSION or
-                                        Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-                            )
-                            prefs.edit().putString("custom_save_path_uri", uri.toString()).apply()
-                            customSavePathState.value = uri.toString()
-                            AppLogger.log("Custom save location selected: $uri")
-                        } catch (e: Exception) {
-                            AppLogger.log(
-                                "Failed to obtain persistent folder permission: ${e.message}"
-                            )
+                        val success = StorageUtils.saveFolderUri(this@MainActivity, uri)
+                        if (success && StorageUtils.isFolderSelectedAndValid(this@MainActivity)) {
+                            customSavePathState.value = StorageUtils.getFolderDisplayName(this@MainActivity)
+                            val wasConfigured = isFolderConfigured.value
+                            isFolderConfigured.value = true
+                            if (!wasConfigured) {
+                                startServiceIfNeeded()
+                            }
+                            Toast.makeText(this@MainActivity, "Save folder configured!", Toast.LENGTH_SHORT).show()
+                        } else {
+                            Toast.makeText(this@MainActivity, "Failed to save folder permission", Toast.LENGTH_LONG).show()
+                            if (!isFolderConfigured.value) {
+                                finishAndRemoveTask()
+                            }
+                        }
+                    } else {
+                        if (!isFolderConfigured.value) {
+                            Toast.makeText(this@MainActivity, "Storage folder is required to use Skiff", Toast.LENGTH_LONG).show()
+                            finishAndRemoveTask()
                         }
                     }
                 }
 
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
-                ) {
+                if (!isFolderConfigured.value) {
+                    FolderRequiredDialog(
+                        onSelectFolder = { folderPickerLauncher.launch(null) },
+                        onExit = { finishAndRemoveTask() }
+                    )
+                } else {
+                    val deviceCode by SkiffBackgroundService.deviceCode.collectAsState()
+                    val connectionStatus by SkiffBackgroundService.connectionStatus.collectAsState()
+                    val activeIncomingRequest by SkiffBackgroundService.activeIncomingRequest.collectAsState()
+                    val activePeerDeviceId by SkiffBackgroundService.activePeerDeviceId.collectAsState()
+
+                    val peerCodeInput = remember { mutableStateOf("") }
+                    val isPairing = remember { mutableStateOf(false) }
+                    val transfers by db.transferDao().getAllTransfersFlow()
+                        .collectAsState(initial = emptyList())
+                    val knownPeers by db.knownPeerDao().getAllPeersFlow()
+                        .collectAsState(initial = emptyList())
+
+                    var showSettings by remember { mutableStateOf(false) }
+                    var showShutdownConfirm by remember { mutableStateOf(false) }
+
+                    // Reset pairing loading state when connection status resolves
+                    LaunchedEffect(connectionStatus) {
+                        if (connectionStatus in listOf("Paired & Connected", "Pairing Rejected", "Registered & Waiting")) {
+                            isPairing.value = false
+                        }
+                    }
+
+                    // File picker
+                    val filePickerLauncher = rememberLauncherForActivityResult(
+                        contract = ActivityResultContracts.GetMultipleContents()
+                    ) { uris: List<Uri> ->
+                        val peerId = activePeerDeviceId
+                        if (uris.isNotEmpty() && peerId != null) {
+                            sendFiles(uris, peerId, transfers.firstOrNull()?.sessionId
+                                ?: UUID.randomUUID().toString())
+                        }
+                    }
+
+                    Surface(
+                        modifier = Modifier.fillMaxSize(),
+                        color = MaterialTheme.colorScheme.background
+                    ) {
                     Scaffold(
                         topBar = {
                             SkiffTopBar(
@@ -274,11 +299,6 @@ class MainActivity : ComponentActivity() {
                         SettingsDialog(
                             customSavePathUri = customSavePathState.value,
                             onChangeSaveLocation = { folderPickerLauncher.launch(null) },
-                            onResetSaveLocation = {
-                                prefs.edit().remove("custom_save_path_uri").apply()
-                                customSavePathState.value = null
-                                AppLogger.log("Reset save location to Downloads default")
-                            },
                             customServerHost = customServerHostState.value,
                             onSaveServerHost = { newHost ->
                                 Config.setServerHost(this@MainActivity, newHost)
@@ -993,7 +1013,6 @@ private fun PairRequestDialog(
 private fun SettingsDialog(
     customSavePathUri: String?,
     onChangeSaveLocation: () -> Unit,
-    onResetSaveLocation: () -> Unit,
     customServerHost: String?,
     onSaveServerHost: (String) -> Unit,
     onResetServerHost: () -> Unit,
@@ -1078,27 +1097,22 @@ private fun SettingsDialog(
                     )
                     Text(
                         text = if (customSavePathUri != null) {
-                            "Custom folder selected"
+                            "Folder: $customSavePathUri"
                         } else {
-                            "Downloads folder (default)"
+                            "No folder selected (Selection required)"
                         },
                         style = MaterialTheme.typography.bodySmall,
-                        color = SkiffColors.TextSecondary
+                        color = if (customSavePathUri != null) MaterialTheme.colorScheme.primary else SkiffColors.Coral
                     )
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         OutlinedButton(
                             onClick = onChangeSaveLocation,
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.fillMaxWidth(),
                             shape = MaterialTheme.shapes.medium
                         ) {
-                            Text("Change Location")
-                        }
-                        if (customSavePathUri != null) {
-                            TextButton(onClick = onResetSaveLocation) {
-                                Text("Reset", color = SkiffColors.TextSecondary)
-                            }
+                            Text("Change Folder")
                         }
                     }
                 }
@@ -1211,6 +1225,60 @@ private fun ShutdownConfirmDialog(
                 )
             ) {
                 Text("Cancel")
+            }
+        }
+    )
+}
+
+@Composable
+private fun FolderRequiredDialog(
+    onSelectFolder: () -> Unit,
+    onExit: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onExit,
+        containerColor = MaterialTheme.colorScheme.surface,
+        shape = MaterialTheme.shapes.large,
+        title = {
+            Text(
+                text = "Save Folder Required",
+                style = MaterialTheme.typography.headlineMedium
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = "Skiff requires a storage folder to save received files directly to your device.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = "Please select a folder to continue. Without selecting a storage folder, the app cannot operate.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = SkiffColors.TextSecondary
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onSelectFolder,
+                shape = MaterialTheme.shapes.medium,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary
+                )
+            ) {
+                Text("Select Folder")
+            }
+        },
+        dismissButton = {
+            OutlinedButton(
+                onClick = onExit,
+                shape = MaterialTheme.shapes.medium,
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = SkiffColors.TextSecondary
+                )
+            ) {
+                Text("Exit App")
             }
         }
     )

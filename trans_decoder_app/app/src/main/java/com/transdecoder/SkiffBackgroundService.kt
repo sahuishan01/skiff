@@ -253,15 +253,20 @@ class SkiffBackgroundService : Service() {
                     output.flush()
                     AppLogger.log("TCP Client: Completed streaming bytes: ${record.fileSize}")
                 } catch (e: Exception) {
-                    AppLogger.log("TCP Client Direct Connection Failed: ${e.message}. Falling back to HTTP Relay...")
-                    val peerId = record.peerDeviceId
-                    webSocket?.sendMessage(
-                        WsMessage.IceCandidate(
-                            target_device_id = peerId,
-                            candidate = "RELAY_FALLBACK:$fileId"
+                    val currentRecord = dbInstance.transferDao().getTransferByIdAndDirection(fileId, TransferDirection.SEND)
+                    if (currentRecord != null && currentRecord.bytesTransferred >= currentRecord.fileSize) {
+                        AppLogger.log("TCP Client: Stream finished full transfer (${currentRecord.bytesTransferred} bytes). Ignoring socket closure error: ${e.message}")
+                    } else {
+                        AppLogger.log("TCP Client Direct Connection Failed: ${e.message}. Falling back to HTTP Relay...")
+                        val peerId = record.peerDeviceId
+                        webSocket?.sendMessage(
+                            WsMessage.IceCandidate(
+                                target_device_id = peerId,
+                                candidate = "RELAY_FALLBACK:$fileId"
+                            )
                         )
-                    )
-                    uploadFileRelay(context, fileId, uri)
+                        uploadFileRelay(context, fileId, uri)
+                    }
                 } finally {
                     socket?.close()
                 }
@@ -377,11 +382,13 @@ class SkiffBackgroundService : Service() {
 
                 val client = okhttp3.OkHttpClient.Builder()
                     .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+                    .writeTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
                     .build()
+
                 try {
                     client.newCall(request).execute().use { response ->
                         if (!response.isSuccessful) {
-                            AppLogger.log("Relay: Download request failed with status ${response.code} for file $fileId")
+                            AppLogger.log("Relay: Download failed with status ${response.code} for file $fileId")
                             dbInstance.transferDao().updateProgress(fileId, TransferDirection.RECEIVE, 0L, TransferStatus.FAILED)
                             return@launch
                         }
@@ -393,7 +400,7 @@ class SkiffBackgroundService : Service() {
                         }
 
                         val outputStream = if (record.filePath.startsWith("content://")) {
-                            context.contentResolver.openOutputStream(Uri.parse(record.filePath), "wa")
+                            context.contentResolver.openOutputStream(Uri.parse(record.filePath), "wt")
                         } else {
                             val destinationFile = File(record.filePath)
                             destinationFile.parentFile?.mkdirs()
@@ -444,19 +451,30 @@ class SkiffBackgroundService : Service() {
         instance = this
         db = AppDatabase.getDatabase(this)
         createNotificationChannel()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                NOTIFICATION_ID,
-                buildNotification("Skiff P2P is active"),
-                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-            )
-        } else {
-            startForeground(NOTIFICATION_ID, buildNotification("Skiff P2P is active"))
-        }
-        isServiceRunning = true
+    }
 
-        initializeWebSocket()
-        startTcpServer()
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == "ACTION_RECONNECT") {
+            AppLogger.log("Service: Handling ACTION_RECONNECT intent...")
+            serviceScope.launch(Dispatchers.IO) {
+                webSocketClient?.close()
+                webSocketClient = null
+                initializeWebSocket()
+            }
+            return START_STICKY
+        }
+
+        if (!isServiceRunning) {
+            isServiceRunning = true
+            startForeground(NOTIFICATION_ID, buildNotification("Initializing Skiff..."))
+
+            // Initialize local TCP Server for direct P2P data transfer
+            startTcpServer()
+
+            // Initialize Signaling WebSocket Client
+            initializeWebSocket()
+        }
+        return START_STICKY
     }
 
     private fun initializeWebSocket() {
@@ -528,6 +546,9 @@ class SkiffBackgroundService : Service() {
     }
 
     private suspend fun handleIncomingTcpConnection(socket: Socket) {
+        var fileId: String? = null
+        var totalReceived = 0L
+        var expectedFileSize = 0L
         try {
             val input = socket.getInputStream()
 
@@ -547,9 +568,10 @@ class SkiffBackgroundService : Service() {
             AppLogger.log("TCP Server: Received header payload: $header")
             val parts = header.split("|")
             if (parts.size < 3) return
-            val fileId = parts[0]
+            fileId = parts[0]
             val fileHash = parts[1]
             val startOffset = parts[2].toLong()
+            totalReceived = startOffset
 
             var record: TransferEntity? = null
             for (i in 1..50) {
@@ -558,11 +580,11 @@ class SkiffBackgroundService : Service() {
                 kotlinx.coroutines.delay(100)
             }
             if (record != null) {
+                expectedFileSize = record.fileSize
                 AppLogger.log("TCP Server: Streaming payload to storage: ${record.filePath}...")
-                var totalReceived = startOffset
 
                 val outputStream = if (record.filePath.startsWith("content://")) {
-                    contentResolver.openOutputStream(Uri.parse(record.filePath), "wa")
+                    contentResolver.openOutputStream(Uri.parse(record.filePath), "wt")
                 } else {
                     val destinationFile = File(record.filePath)
                     destinationFile.parentFile?.mkdirs()
@@ -589,8 +611,18 @@ class SkiffBackgroundService : Service() {
                             )
                         }
                     }
+                    out.flush()
                 }
-                AppLogger.log("TCP Server: File stream completed. Bytes written: $totalReceived")
+
+                if (totalReceived >= record.fileSize) {
+                    db.transferDao().updateProgress(
+                        fileId = fileId,
+                        direction = TransferDirection.RECEIVE,
+                        bytesTransferred = totalReceived,
+                        status = TransferStatus.COMPLETED
+                    )
+                }
+                AppLogger.log("TCP Server: File stream completed. Bytes written: $totalReceived / ${record.fileSize}")
             } else {
                 AppLogger.log("TCP Server Error: File entity not found in database for ID: $fileId")
                 try {
@@ -606,6 +638,9 @@ class SkiffBackgroundService : Service() {
         } catch (e: Exception) {
             AppLogger.log("TCP Server Error: ${e.message}")
             e.printStackTrace()
+            if (fileId != null && expectedFileSize > 0L && totalReceived < expectedFileSize) {
+                db.transferDao().updateProgress(fileId, TransferDirection.RECEIVE, totalReceived, TransferStatus.FAILED)
+            }
         } finally {
             socket.close()
         }
@@ -659,32 +694,12 @@ class SkiffBackgroundService : Service() {
                 AppLogger.log("Incoming file transfer session initiated. Files count: ${message.files.size}")
                 serviceScope.launch(Dispatchers.IO) {
                     try {
-                        val prefs = getSharedPreferences("skiff_prefs", MODE_PRIVATE)
-                        val customUriStr = prefs.getString("custom_save_path_uri", null)
-
                         message.files.forEach { file ->
-                            var destinationPath: String? = null
-                            if (customUriStr != null) {
-                                try {
-                                    val treeUri = Uri.parse(customUriStr)
-                                    val docDir = androidx.documentfile.provider.DocumentFile.fromTreeUri(this@SkiffBackgroundService, treeUri)
-                                    if (docDir != null && docDir.canWrite()) {
-                                        docDir.findFile(file.file_name)?.delete()
-                                        val newDoc = docDir.createFile("application/octet-stream", file.file_name)
-                                        if (newDoc != null) {
-                                            destinationPath = newDoc.uri.toString()
-                                            AppLogger.log("Custom save location resolved: ${newDoc.uri}")
-                                        }
-                                    }
-                                } catch (e: Exception) {
-                                    AppLogger.log("Custom save location error: ${e.message}. Falling back to Downloads.")
-                                }
-                            }
-
-                            val savePath: String = destinationPath ?: run {
+                            val docUriStr = StorageUtils.createDocumentFile(this@SkiffBackgroundService, file.file_name)
+                            val savePath: String = docUriStr ?: run {
                                 val downloadsDir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: filesDir
                                 val localFile = File(downloadsDir, file.file_name)
-                                AppLogger.log("Default save location resolved: ${localFile.absolutePath}")
+                                AppLogger.log("Fallback save location resolved: ${localFile.absolutePath}")
                                 localFile.absolutePath
                             }
 
@@ -711,7 +726,12 @@ class SkiffBackgroundService : Service() {
             }
             is WsMessage.ProgressUpdated -> {
                 serviceScope.launch(Dispatchers.IO) {
-                    val status = db.transferDao().getTransferByIdAndDirection(message.file_id, TransferDirection.RECEIVE)?.let {
+                    val existing = db.transferDao().getTransferByIdAndDirection(message.file_id, TransferDirection.RECEIVE)
+                    if (existing != null && existing.status == TransferStatus.COMPLETED) {
+                        // Already completed locally, ignore outdated progress messages
+                        return@launch
+                    }
+                    val status = existing?.let {
                         if (message.bytes_transferred >= it.fileSize) TransferStatus.COMPLETED else TransferStatus.TRANSFERRING
                     } ?: TransferStatus.TRANSFERRING
                     db.transferDao().updateProgress(message.file_id, TransferDirection.RECEIVE, message.bytes_transferred, status)
