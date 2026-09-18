@@ -457,7 +457,7 @@ class SkiffBackgroundService : Service() {
         if (intent?.action == "ACTION_RECONNECT") {
             AppLogger.log("Service: Handling ACTION_RECONNECT intent...")
             serviceScope.launch(Dispatchers.IO) {
-                webSocketClient?.close()
+                webSocketClient?.disconnect()
                 webSocketClient = null
                 initializeWebSocket()
             }
@@ -800,10 +800,6 @@ class SkiffBackgroundService : Service() {
             val manager = getSystemService(NotificationManager::class.java)
             manager.createNotificationChannel(serviceChannel)
         }
-    }
-
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        return START_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? {
