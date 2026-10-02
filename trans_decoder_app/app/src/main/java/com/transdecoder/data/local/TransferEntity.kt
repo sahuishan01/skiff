@@ -48,3 +48,23 @@ data class ChatEntity(
     val isDelivered: Boolean = false,
     val timestamp: Long = System.currentTimeMillis()
 )
+
+@Entity(tableName = "groups")
+data class GroupEntity(
+    @PrimaryKey val groupId: String,
+    val groupCode: String,
+    val groupName: String,
+    val createdBy: String,
+    val memberCount: Int = 1,
+    val lastActiveAt: Long = System.currentTimeMillis()
+)
+
+@Entity(tableName = "group_chat_messages")
+data class GroupChatEntity(
+    @PrimaryKey val messageId: String,
+    val groupId: String,
+    val senderDeviceId: String,
+    val isFromMe: Boolean,
+    val content: String,
+    val timestamp: Long = System.currentTimeMillis()
+)

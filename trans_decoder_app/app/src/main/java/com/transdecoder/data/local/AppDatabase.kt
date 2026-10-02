@@ -6,12 +6,14 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
 
-@Database(entities = [TransferEntity::class, KnownPeer::class, ChatEntity::class], version = 5, exportSchema = false)
+@Database(entities = [TransferEntity::class, KnownPeer::class, ChatEntity::class, GroupEntity::class, GroupChatEntity::class], version = 6, exportSchema = false)
 @TypeConverters(Converters::class)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun transferDao(): TransferDao
     abstract fun knownPeerDao(): KnownPeerDao
     abstract fun chatDao(): ChatDao
+    abstract fun groupDao(): GroupDao
+    abstract fun groupChatDao(): GroupChatDao
 
     companion object {
         @Volatile

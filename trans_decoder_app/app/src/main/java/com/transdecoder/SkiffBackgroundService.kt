@@ -167,6 +167,55 @@ class SkiffBackgroundService : Service() {
             )
         }
 
+        val activeGroupDetails = MutableStateFlow<Map<String, com.transdecoder.data.network.GroupInfo>>(emptyMap())
+
+        fun createGroup(groupName: String) {
+            AppLogger.log("Creating group: $groupName")
+            webSocketClient?.sendMessage(WsMessage.CreateGroup(groupName))
+        }
+
+        fun joinGroup(groupCode: String) {
+            AppLogger.log("Joining group with code: $groupCode")
+            webSocketClient?.sendMessage(WsMessage.JoinGroup(groupCode))
+        }
+
+        fun leaveGroup(groupId: String) {
+            AppLogger.log("Leaving group: $groupId")
+            webSocketClient?.sendMessage(WsMessage.LeaveGroup(groupId))
+        }
+
+        fun fetchGroups() {
+            webSocketClient?.sendMessage(WsMessage.GetMyGroups)
+        }
+
+        fun sendGroupChat(groupId: String, content: String) {
+            val messageId = UUID.randomUUID().toString()
+            AppLogger.log("Sending group chat message to group $groupId: $content")
+            instance?.let { svc ->
+                val myDeviceId = svc.getSharedPreferences("skiff_prefs", MODE_PRIVATE)
+                    .getString("device_id", "Me") ?: "Me"
+                CoroutineScope(Dispatchers.IO).launch {
+                    val appDb = AppDatabase.getDatabase(svc)
+                    appDb.groupChatDao().insertMessage(
+                        com.transdecoder.data.local.GroupChatEntity(
+                            messageId = messageId,
+                            groupId = groupId,
+                            senderDeviceId = myDeviceId,
+                            isFromMe = true,
+                            content = content
+                        )
+                    )
+                }
+            }
+            webSocketClient?.sendMessage(
+                WsMessage.SendGroupChat(
+                    message_id = messageId,
+                    group_id = groupId,
+                    content = content
+                )
+            )
+        }
+
         fun rejectPairRequest(senderId: String) {
             AppLogger.log("Rejecting pairing request from peer: $senderId")
             webSocketClient?.sendMessage(WsMessage.RejectRequest(senderId))
@@ -653,6 +702,7 @@ class SkiffBackgroundService : Service() {
                 connectionStatus.value = "Registered & Waiting"
                 AppLogger.log("Device sharing code registered: ${message.device_code}")
                 updateNotification("Sharing Code: ${message.device_code}")
+                webSocketClient?.sendMessage(WsMessage.GetMyGroups)
             }
             is WsMessage.IncomingRequest -> {
                 AppLogger.log("Received pairing request from device ID: ${message.sender_device_id}")
@@ -761,6 +811,126 @@ class SkiffBackgroundService : Service() {
                 AppLogger.log("Chat message delivered: ${message.message_id}")
                 serviceScope.launch(Dispatchers.IO) {
                     db.chatDao().markDelivered(message.message_id)
+                }
+            }
+            is WsMessage.GroupCreated -> {
+                AppLogger.log("Group created: ${message.group.group_name} (${message.group.group_code})")
+                val current = activeGroupDetails.value.toMutableMap()
+                current[message.group.group_id] = message.group
+                activeGroupDetails.value = current
+                serviceScope.launch(Dispatchers.IO) {
+                    db.groupDao().upsertGroup(
+                        com.transdecoder.data.local.GroupEntity(
+                            groupId = message.group.group_id,
+                            groupCode = message.group.group_code,
+                            groupName = message.group.group_name,
+                            createdBy = message.group.created_by,
+                            memberCount = message.group.members.size,
+                            lastActiveAt = System.currentTimeMillis()
+                        )
+                    )
+                }
+            }
+            is WsMessage.GroupJoined -> {
+                AppLogger.log("Group joined: ${message.group.group_name} (${message.group.group_code})")
+                val current = activeGroupDetails.value.toMutableMap()
+                current[message.group.group_id] = message.group
+                activeGroupDetails.value = current
+                serviceScope.launch(Dispatchers.IO) {
+                    db.groupDao().upsertGroup(
+                        com.transdecoder.data.local.GroupEntity(
+                            groupId = message.group.group_id,
+                            groupCode = message.group.group_code,
+                            groupName = message.group.group_name,
+                            createdBy = message.group.created_by,
+                            memberCount = message.group.members.size,
+                            lastActiveAt = System.currentTimeMillis()
+                        )
+                    )
+                }
+            }
+            is WsMessage.GroupLeft -> {
+                AppLogger.log("Left group: ${message.group_id}")
+                val current = activeGroupDetails.value.toMutableMap()
+                current.remove(message.group_id)
+                activeGroupDetails.value = current
+                serviceScope.launch(Dispatchers.IO) {
+                    db.groupDao().deleteGroup(message.group_id)
+                }
+            }
+            is WsMessage.GroupList -> {
+                AppLogger.log("Received group list with ${message.groups.size} groups")
+                val map = message.groups.associateBy { it.group_id }
+                activeGroupDetails.value = map
+                serviceScope.launch(Dispatchers.IO) {
+                    message.groups.forEach { grp ->
+                        db.groupDao().upsertGroup(
+                            com.transdecoder.data.local.GroupEntity(
+                                groupId = grp.group_id,
+                                groupCode = grp.group_code,
+                                groupName = grp.group_name,
+                                createdBy = grp.created_by,
+                                memberCount = grp.members.size,
+                                lastActiveAt = System.currentTimeMillis()
+                            )
+                        )
+                    }
+                }
+            }
+            is WsMessage.GroupMemberJoined -> {
+                AppLogger.log("Member ${message.member.device_id} joined group ${message.group_id}")
+                val current = activeGroupDetails.value.toMutableMap()
+                current[message.group_id]?.let { grp ->
+                    val updatedMembers = grp.members.filter { it.device_id != message.member.device_id } + message.member
+                    current[message.group_id] = grp.copy(members = updatedMembers)
+                    activeGroupDetails.value = current
+                    serviceScope.launch(Dispatchers.IO) {
+                        db.groupDao().upsertGroup(
+                            com.transdecoder.data.local.GroupEntity(
+                                groupId = grp.group_id,
+                                groupCode = grp.group_code,
+                                groupName = grp.group_name,
+                                createdBy = grp.created_by,
+                                memberCount = updatedMembers.size,
+                                lastActiveAt = System.currentTimeMillis()
+                            )
+                        )
+                    }
+                }
+            }
+            is WsMessage.GroupMemberLeft -> {
+                AppLogger.log("Member ${message.device_id} left group ${message.group_id}")
+                val current = activeGroupDetails.value.toMutableMap()
+                current[message.group_id]?.let { grp ->
+                    val updatedMembers = grp.members.filter { it.device_id != message.device_id }
+                    current[message.group_id] = grp.copy(members = updatedMembers)
+                    activeGroupDetails.value = current
+                    serviceScope.launch(Dispatchers.IO) {
+                        db.groupDao().upsertGroup(
+                            com.transdecoder.data.local.GroupEntity(
+                                groupId = grp.group_id,
+                                groupCode = grp.group_code,
+                                groupName = grp.group_name,
+                                createdBy = grp.created_by,
+                                memberCount = updatedMembers.size,
+                                lastActiveAt = System.currentTimeMillis()
+                            )
+                        )
+                    }
+                }
+            }
+            is WsMessage.GroupChatReceived -> {
+                AppLogger.log("Received group chat in ${message.group_id} from ${message.sender_device_id}: ${message.content}")
+                serviceScope.launch(Dispatchers.IO) {
+                    db.groupChatDao().insertMessage(
+                        com.transdecoder.data.local.GroupChatEntity(
+                            messageId = message.message_id,
+                            groupId = message.group_id,
+                            senderDeviceId = message.sender_device_id,
+                            isFromMe = false,
+                            content = message.content
+                        )
+                    )
                 }
             }
             else -> {}

@@ -24,6 +24,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -31,11 +32,14 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.ExitToApp
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -45,12 +49,14 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.transdecoder.data.local.AppDatabase
+import com.transdecoder.data.local.GroupChatEntity
+import com.transdecoder.data.local.GroupEntity
 import com.transdecoder.data.local.KnownPeer
 import com.transdecoder.data.local.TransferDirection
 import com.transdecoder.data.local.TransferEntity
 import com.transdecoder.data.local.TransferStatus
-import com.transdecoder.ui.theme.PairCodeFont
 import com.transdecoder.data.network.FileMetadataInput
+import com.transdecoder.data.network.GroupInfo
 import com.transdecoder.data.network.WsMessage
 import com.transdecoder.ui.theme.PairCodeFont
 import com.transdecoder.ui.theme.SkiffColors
@@ -168,9 +174,18 @@ class MainActivity : ComponentActivity() {
                         .collectAsState(initial = emptyList())
                     val knownPeers by db.knownPeerDao().getAllPeersFlow()
                         .collectAsState(initial = emptyList())
+                    val groups by db.groupDao().getAllGroupsFlow()
+                        .collectAsState(initial = emptyList())
+
+                    val selectedPeerIds = remember { mutableStateListOf<String>() }
 
                     var showSettings by remember { mutableStateOf(false) }
                     var showShutdownConfirm by remember { mutableStateOf(false) }
+                    var showCreateGroupDialog by remember { mutableStateOf(false) }
+                    var showJoinGroupDialog by remember { mutableStateOf(false) }
+                    var activeChatGroup by remember { mutableStateOf<GroupEntity?>(null) }
+                    var targetGroupIdForFiles by remember { mutableStateOf<String?>(null) }
+                    var isMultiShareByFiles by remember { mutableStateOf(false) }
 
                     // Reset pairing loading state when connection status resolves
                     LaunchedEffect(connectionStatus) {
@@ -179,14 +194,31 @@ class MainActivity : ComponentActivity() {
                         }
                     }
 
-                    // File picker
+                    // Single peer or ad-hoc multi-peer or group file picker launcher
                     val filePickerLauncher = rememberLauncherForActivityResult(
                         contract = ActivityResultContracts.GetMultipleContents()
                     ) { uris: List<Uri> ->
-                        val peerId = activePeerDeviceId
-                        if (uris.isNotEmpty() && peerId != null) {
-                            sendFiles(uris, peerId, transfers.firstOrNull()?.sessionId
-                                ?: UUID.randomUUID().toString())
+                        if (uris.isNotEmpty()) {
+                            val targetGroup = targetGroupIdForFiles
+                            if (targetGroup != null) {
+                                sendFilesToGroup(uris, targetGroup)
+                                targetGroupIdForFiles = null
+                            } else if (isMultiShareByFiles && selectedPeerIds.isNotEmpty()) {
+                                sendFilesToMultiplePeers(uris, selectedPeerIds.toList())
+                                isMultiShareByFiles = false
+                            } else {
+                                val peerId = activePeerDeviceId
+                                if (peerId != null) {
+                                    sendFiles(
+                                        uris,
+                                        peerId,
+                                        transfers.firstOrNull()?.sessionId ?: UUID.randomUUID().toString()
+                                    )
+                                }
+                            }
+                        } else {
+                            targetGroupIdForFiles = null
+                            isMultiShareByFiles = false
                         }
                     }
 
@@ -235,12 +267,46 @@ class MainActivity : ComponentActivity() {
                                 },
                                 isPaired = activePeerDeviceId != null,
                                 isPairing = isPairing.value,
-                                onSendFiles = { filePickerLauncher.launch("*/*") }
+                                onSendFiles = {
+                                    isMultiShareByFiles = false
+                                    targetGroupIdForFiles = null
+                                    filePickerLauncher.launch("*/*")
+                                }
                             )
 
                             PeersSection(
                                 peers = knownPeers,
-                                activePeerId = activePeerDeviceId
+                                activePeerId = activePeerDeviceId,
+                                selectedPeerIds = selectedPeerIds,
+                                onToggleSelectPeer = { pId ->
+                                    if (selectedPeerIds.contains(pId)) {
+                                        selectedPeerIds.remove(pId)
+                                    } else {
+                                        selectedPeerIds.add(pId)
+                                    }
+                                },
+                                onShareToSelected = {
+                                    isMultiShareByFiles = true
+                                    targetGroupIdForFiles = null
+                                    filePickerLauncher.launch("*/*")
+                                }
+                            )
+
+                            GroupsSection(
+                                groups = groups,
+                                onCreateGroupClick = { showCreateGroupDialog = true },
+                                onJoinGroupClick = { showJoinGroupDialog = true },
+                                onSendFilesToGroup = { grpId ->
+                                    targetGroupIdForFiles = grpId
+                                    isMultiShareByFiles = false
+                                    filePickerLauncher.launch("*/*")
+                                },
+                                onOpenGroupChat = { grp ->
+                                    activeChatGroup = grp
+                                },
+                                onLeaveGroup = { grpId ->
+                                    SkiffBackgroundService.leaveGroup(grpId)
+                                }
                             )
 
                             // Chat UI Section when paired with active peer
@@ -279,6 +345,42 @@ class MainActivity : ComponentActivity() {
                                 modifier = Modifier.weight(1f)
                             )
                         }
+                    }
+
+                    // ── Create Group Dialog ───────────────────────────────────
+                    if (showCreateGroupDialog) {
+                        CreateGroupDialog(
+                            onCreateGroup = { name ->
+                                SkiffBackgroundService.createGroup(name)
+                                showCreateGroupDialog = false
+                            },
+                            onDismiss = { showCreateGroupDialog = false }
+                        )
+                    }
+
+                    // ── Join Group Dialog ─────────────────────────────────────
+                    if (showJoinGroupDialog) {
+                        JoinGroupDialog(
+                            onJoinGroup = { code ->
+                                SkiffBackgroundService.joinGroup(code)
+                                showJoinGroupDialog = false
+                            },
+                            onDismiss = { showJoinGroupDialog = false }
+                        )
+                    }
+
+                    // ── Group Chat Bottom Sheet ───────────────────────────────
+                    activeChatGroup?.let { group ->
+                        val groupMessages by db.groupChatDao().getChatMessagesForGroupFlow(group.groupId)
+                            .collectAsState(initial = emptyList())
+                        GroupChatBottomSheet(
+                            group = group,
+                            messages = groupMessages,
+                            onSendMessage = { text ->
+                                SkiffBackgroundService.sendGroupChat(group.groupId, text)
+                            },
+                            onDismiss = { activeChatGroup = null }
+                        )
                     }
 
                     // ── Incoming Pair Request Dialog ──────────────────────────
@@ -398,6 +500,82 @@ class MainActivity : ComponentActivity() {
                 }
             } catch (e: Exception) {
                 AppLogger.log("Sender: Failed to initiate transfer: ${e.message}")
+                e.printStackTrace()
+            }
+        }
+    }
+
+    private fun sendFilesToMultiplePeers(uris: List<Uri>, peerIds: List<String>) {
+        peerIds.forEach { peerId ->
+            val sessionId = UUID.randomUUID().toString()
+            sendFiles(uris, peerId, sessionId)
+        }
+    }
+
+    private fun sendFilesToGroup(uris: List<Uri>, groupId: String) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val group = SkiffBackgroundService.activeGroupDetails.value[groupId]
+                val onlineMembers = group?.members?.filter { it.is_online }?.map { it.device_id } ?: emptyList()
+                val targetRecipients = onlineMembers.ifEmpty {
+                    val dbGroup = db.groupDao().getGroup(groupId)
+                    if (dbGroup != null) {
+                        val known = db.knownPeerDao().getAllPeers().map { it.deviceId }
+                        known
+                    } else emptyList()
+                }
+
+                if (targetRecipients.isEmpty()) {
+                    launch(Dispatchers.Main) {
+                        Toast.makeText(this@MainActivity, "No online members in this group to receive files", Toast.LENGTH_SHORT).show()
+                    }
+                    return@launch
+                }
+
+                val sessionId = UUID.randomUUID().toString()
+                val fileList = uris.map { uri ->
+                    val (name, size) = getUriMetadata(uri)
+                    val fileId = UUID.randomUUID().toString()
+                    val fileHash = UUID.randomUUID().toString()
+
+                    targetRecipients.forEach { peerId ->
+                        val newFile = TransferEntity(
+                            fileId = fileId,
+                            sessionId = sessionId,
+                            fileName = name,
+                            filePath = uri.toString(),
+                            fileSize = size,
+                            fileHash = fileHash,
+                            bytesTransferred = 0L,
+                            status = TransferStatus.PENDING,
+                            direction = TransferDirection.SEND,
+                            peerDeviceId = peerId
+                        )
+                        db.transferDao().insertTransfer(newFile)
+                    }
+
+                    FileMetadataInput(
+                        file_id = fileId,
+                        file_name = name,
+                        file_path = uri.toString(),
+                        file_size = size,
+                        file_hash = fileHash
+                    )
+                }
+
+                SkiffBackgroundService.webSocketClient?.sendMessage(
+                    WsMessage.InitiateGroupTransfer(
+                        group_id = groupId,
+                        session_id = sessionId,
+                        files = fileList
+                    )
+                )
+
+                fileList.zip(uris).forEach { (file, uri) ->
+                    SkiffBackgroundService.sendFileTcp(this@MainActivity, file.file_id, uri)
+                }
+            } catch (e: Exception) {
+                AppLogger.log("Sender: Failed to initiate group transfer: ${e.message}")
                 e.printStackTrace()
             }
         }
@@ -627,7 +805,10 @@ private fun ActionSection(
 @Composable
 private fun PeersSection(
     peers: List<KnownPeer>,
-    activePeerId: String?
+    activePeerId: String?,
+    selectedPeerIds: List<String>,
+    onToggleSelectPeer: (String) -> Unit,
+    onShareToSelected: () -> Unit
 ) {
     if (peers.isEmpty()) return
 
@@ -640,44 +821,94 @@ private fun PeersSection(
             .padding(horizontal = 16.dp)
             .padding(top = 4.dp, bottom = 4.dp)
     ) {
-        Text(
-            text = "Peers (${peers.size})",
-            style = MaterialTheme.typography.labelLarge,
-            color = SkiffColors.TextSecondary,
-            modifier = Modifier.padding(bottom = 6.dp)
-        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = "Peers (${peers.size})",
+                style = MaterialTheme.typography.labelLarge,
+                color = SkiffColors.TextSecondary
+            )
+
+            if (selectedPeerIds.isNotEmpty()) {
+                Surface(
+                    shape = MaterialTheme.shapes.small,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.clickable { onShareToSelected() }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Share,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp),
+                            tint = MaterialTheme.colorScheme.onPrimary
+                        )
+                        Text(
+                            text = "Share to ${selectedPeerIds.size} Selected",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onPrimary,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+        }
 
         LazyRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             items(peers) { peer ->
                 val isActive = peer.deviceId == activePeerId
+                val isSelected = selectedPeerIds.contains(peer.deviceId)
                 val displayName = peer.displayName.ifEmpty {
                     peer.deviceId.take(8)
                 }
 
                 Surface(
                     shape = MaterialTheme.shapes.medium,
-                    color = if (isActive) {
-                        MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
-                    } else {
-                        SkiffColors.SurfaceElevated
+                    color = when {
+                        isSelected -> MaterialTheme.colorScheme.primaryContainer
+                        isActive -> MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
+                        else -> SkiffColors.SurfaceElevated
                     },
                     modifier = Modifier
-                        .clickable(enabled = !isActive) {
-                            SkiffBackgroundService.sendPairRequestById(peer.deviceId)
-                        }
+                        .combinedClickable(
+                            onClick = {
+                                if (selectedPeerIds.isNotEmpty()) {
+                                    onToggleSelectPeer(peer.deviceId)
+                                } else if (!isActive) {
+                                    SkiffBackgroundService.sendPairRequestById(peer.deviceId)
+                                }
+                            },
+                            onLongClick = {
+                                onToggleSelectPeer(peer.deviceId)
+                            }
+                        )
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         modifier = Modifier
                             .padding(horizontal = 12.dp, vertical = 10.dp)
-                            .combinedClickable(
-                                onClick = {},
-                                onLongClick = { renameTarget = peer }
-                            )
                     ) {
+                        Checkbox(
+                            checked = isSelected,
+                            onCheckedChange = { onToggleSelectPeer(peer.deviceId) },
+                            modifier = Modifier.size(20.dp),
+                            colors = CheckboxDefaults.colors(
+                                checkedColor = MaterialTheme.colorScheme.primary,
+                                uncheckedColor = SkiffColors.TextMuted
+                            )
+                        )
+
                         Box(
                             modifier = Modifier
                                 .size(8.dp)
@@ -687,8 +918,8 @@ private fun PeersSection(
                         Text(
                             text = displayName,
                             style = MaterialTheme.typography.bodySmall,
-                            fontWeight = if (isActive) FontWeight.Medium else FontWeight.Normal,
-                            color = if (isActive) MaterialTheme.colorScheme.primary
+                            fontWeight = if (isActive || isSelected) FontWeight.Medium else FontWeight.Normal,
+                            color = if (isActive || isSelected) MaterialTheme.colorScheme.primary
                                     else MaterialTheme.colorScheme.onSurface
                         )
                         if (isActive) {
@@ -1381,6 +1612,428 @@ private fun ChatBottomSheet(
                     value = inputText,
                     onValueChange = { inputText = it },
                     placeholder = { Text("Type message...") },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    shape = MaterialTheme.shapes.medium
+                )
+                Button(
+                    onClick = {
+                        if (inputText.isNotBlank()) {
+                            onSendMessage(inputText.trim())
+                            inputText = ""
+                        }
+                    },
+                    enabled = inputText.isNotBlank(),
+                    shape = MaterialTheme.shapes.medium
+                ) {
+                    Text("Send")
+                }
+            }
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Groups UI Composable Components
+// ═══════════════════════════════════════════════════════════════════════════════
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun GroupsSection(
+    groups: List<GroupEntity>,
+    onCreateGroupClick: () -> Unit,
+    onJoinGroupClick: () -> Unit,
+    onSendFilesToGroup: (String) -> Unit,
+    onOpenGroupChat: (GroupEntity) -> Unit,
+    onLeaveGroup: (String) -> Unit
+) {
+    var leaveConfirmGroup by remember { mutableStateOf<GroupEntity?>(null) }
+    val clipboardManager = LocalClipboardManager.current
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .padding(top = 4.dp, bottom = 4.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = "Groups (${groups.size})",
+                style = MaterialTheme.typography.labelLarge,
+                color = SkiffColors.TextSecondary
+            )
+
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                OutlinedButton(
+                    onClick = onJoinGroupClick,
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                    shape = MaterialTheme.shapes.small,
+                    modifier = Modifier.height(28.dp)
+                ) {
+                    Text("Join Code", style = MaterialTheme.typography.labelSmall)
+                }
+
+                Button(
+                    onClick = onCreateGroupClick,
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                    shape = MaterialTheme.shapes.small,
+                    modifier = Modifier.height(28.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = null,
+                        modifier = Modifier.size(12.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("New Group", style = MaterialTheme.typography.labelSmall)
+                }
+            }
+        }
+
+        if (groups.isEmpty()) {
+            Surface(
+                shape = MaterialTheme.shapes.medium,
+                color = SkiffColors.SurfaceElevated.copy(alpha = 0.5f),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    text = "Create or join a group with a 6-digit code for instant multi-device sharing.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = SkiffColors.TextMuted,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                )
+            }
+        } else {
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(groups, key = { it.groupId }) { grp ->
+                    Surface(
+                        shape = MaterialTheme.shapes.medium,
+                        color = SkiffColors.SurfaceElevated,
+                        modifier = Modifier.combinedClickable(
+                            onClick = { onOpenGroupChat(grp) },
+                            onLongClick = { leaveConfirmGroup = grp }
+                        )
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                        ) {
+                            Column {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text(
+                                        text = grp.groupName,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Surface(
+                                        shape = MaterialTheme.shapes.small,
+                                        color = MaterialTheme.colorScheme.primaryContainer,
+                                        modifier = Modifier.clickable {
+                                            clipboardManager.setText(AnnotatedString(grp.groupCode))
+                                        }
+                                    ) {
+                                        Text(
+                                            text = grp.groupCode,
+                                            fontFamily = PairCodeFont,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                        )
+                                    }
+                                }
+
+                                Text(
+                                    text = "${grp.memberCount} members",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = SkiffColors.TextMuted
+                                )
+                            }
+
+                            IconButton(
+                                onClick = { onSendFilesToGroup(grp.groupId) },
+                                modifier = Modifier.size(28.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Share,
+                                    contentDescription = "Share files to group",
+                                    modifier = Modifier.size(16.dp),
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Leave group confirmation dialog
+    leaveConfirmGroup?.let { grp ->
+        AlertDialog(
+            onDismissRequest = { leaveConfirmGroup = null },
+            containerColor = MaterialTheme.colorScheme.surface,
+            shape = MaterialTheme.shapes.large,
+            title = {
+                Text("Leave Group", style = MaterialTheme.typography.headlineMedium)
+            },
+            text = {
+                Text(
+                    text = "Are you sure you want to leave \"${grp.groupName}\"?",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = SkiffColors.TextSecondary
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onLeaveGroup(grp.groupId)
+                        leaveConfirmGroup = null
+                    },
+                    shape = MaterialTheme.shapes.medium,
+                    colors = ButtonDefaults.buttonColors(containerColor = SkiffColors.Coral)
+                ) {
+                    Text("Leave")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { leaveConfirmGroup = null }) {
+                    Text("Cancel", color = SkiffColors.TextSecondary)
+                }
+            }
+        )
+    }
+}
+
+@Composable
+private fun CreateGroupDialog(
+    onCreateGroup: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var groupName by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
+        shape = MaterialTheme.shapes.large,
+        title = {
+            Text("Create Named Group", style = MaterialTheme.typography.headlineMedium)
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = "Enter a name for your group. A unique 6-character code will be generated to invite others.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = SkiffColors.TextSecondary
+                )
+                OutlinedTextField(
+                    value = groupName,
+                    onValueChange = { groupName = it },
+                    label = { Text("Group Name") },
+                    placeholder = { Text("e.g. Design Team") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.medium
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (groupName.isNotBlank()) {
+                        onCreateGroup(groupName.trim())
+                    }
+                },
+                enabled = groupName.isNotBlank(),
+                shape = MaterialTheme.shapes.medium
+            ) {
+                Text("Create")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel", color = SkiffColors.TextSecondary)
+            }
+        }
+    )
+}
+
+@Composable
+private fun JoinGroupDialog(
+    onJoinGroup: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var groupCode by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
+        shape = MaterialTheme.shapes.large,
+        title = {
+            Text("Join Group", style = MaterialTheme.typography.headlineMedium)
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = "Enter the 6-character group invite code to join:",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = SkiffColors.TextSecondary
+                )
+                OutlinedTextField(
+                    value = groupCode,
+                    onValueChange = { groupCode = it.uppercase().take(6) },
+                    label = { Text("Group Code") },
+                    placeholder = { Text("6-CHAR CODE") },
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.titleLarge.copy(
+                        fontFamily = PairCodeFont,
+                        letterSpacing = 4.sp
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.medium
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (groupCode.length == 6) {
+                        onJoinGroup(groupCode.trim())
+                    }
+                },
+                enabled = groupCode.length == 6,
+                shape = MaterialTheme.shapes.medium
+            ) {
+                Text("Join")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel", color = SkiffColors.TextSecondary)
+            }
+        }
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun GroupChatBottomSheet(
+    group: GroupEntity,
+    messages: List<GroupChatEntity>,
+    onSendMessage: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var inputText by remember { mutableStateOf("") }
+    val clipboardManager = LocalClipboardManager.current
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
+        scrimColor = MaterialTheme.colorScheme.scrim.copy(alpha = 0.5f)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .fillMaxHeight(0.75f)
+                .padding(16.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
+            ) {
+                Column {
+                    Text(
+                        text = group.groupName,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = "Code: ${group.groupCode}",
+                            fontFamily = PairCodeFont,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.clickable {
+                                clipboardManager.setText(AnnotatedString(group.groupCode))
+                            }
+                        )
+                        Text(
+                            text = "• ${group.memberCount} members",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = SkiffColors.TextMuted
+                        )
+                    }
+                }
+                IconButton(onClick = onDismiss) {
+                    Icon(Icons.Default.Close, contentDescription = "Close")
+                }
+            }
+
+            LazyColumn(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(messages) { msg ->
+                    val isMe = msg.isFromMe
+                    Box(
+                        modifier = Modifier.fillMaxWidth(),
+                        contentAlignment = if (isMe) Alignment.CenterEnd else Alignment.CenterStart
+                    ) {
+                        Surface(
+                            shape = MaterialTheme.shapes.medium,
+                            color = if (isMe) MaterialTheme.colorScheme.primary else SkiffColors.SurfaceElevated,
+                            modifier = Modifier.widthIn(max = 280.dp)
+                        ) {
+                            Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                                if (!isMe) {
+                                    Text(
+                                        text = msg.senderDeviceId.take(8),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = SkiffColors.Amber,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                                Text(
+                                    text = msg.content,
+                                    color = if (isMe) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                OutlinedTextField(
+                    value = inputText,
+                    onValueChange = { inputText = it },
+                    placeholder = { Text("Type group message...") },
                     modifier = Modifier.weight(1f),
                     singleLine = true,
                     shape = MaterialTheme.shapes.medium
