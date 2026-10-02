@@ -14,7 +14,7 @@ use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
 use crate::{
-    models::{FileStatus, WsMessage},
+    models::{FileStatus, GroupInfo, GroupMemberInfo, WsMessage},
     signaling::SignalingState,
 };
 
@@ -482,6 +482,368 @@ async fn handle_socket(
                     Err(e) => {
                         error!("Failed to update file progress in DB: {}", e);
                     }
+                }
+            }
+
+            WsMessage::CreateGroup { group_name } => {
+                let sender_id = match &client_device_id {
+                    Some(id) => id,
+                    None => {
+                        let _ = tx.send(WsMessage::Error {
+                            message: "Unregistered device".to_string(),
+                        });
+                        continue;
+                    }
+                };
+
+                let group_id = uuid::Uuid::new_v4().to_string();
+                let group_code: String = rand::thread_rng()
+                    .sample_iter(&Alphanumeric)
+                    .take(6)
+                    .map(char::from)
+                    .collect::<String>()
+                    .to_uppercase();
+
+                let res = sqlx::query!(
+                    "INSERT INTO groups (group_id, group_code, group_name, created_by) VALUES ($1, $2, $3, $4)",
+                    group_id,
+                    group_code,
+                    group_name,
+                    sender_id
+                )
+                .execute(&pool)
+                .await;
+
+                if let Err(e) = res {
+                    error!("Failed to create group: {}", e);
+                    let _ = tx.send(WsMessage::Error {
+                        message: "Failed to create group".to_string(),
+                    });
+                    continue;
+                }
+
+                // Add creator as first member
+                let _ = sqlx::query!(
+                    "INSERT INTO group_members (group_id, device_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+                    group_id,
+                    sender_id
+                )
+                .execute(&pool)
+                .await;
+
+                let group_info = GroupInfo {
+                    group_id: group_id.clone(),
+                    group_code: group_code.clone(),
+                    group_name: group_name.clone(),
+                    created_by: sender_id.clone(),
+                    members: vec![GroupMemberInfo {
+                        device_id: sender_id.clone(),
+                        is_online: true,
+                    }],
+                };
+
+                let _ = tx.send(WsMessage::GroupCreated {
+                    group: group_info,
+                });
+            }
+
+            WsMessage::JoinGroup { group_code } => {
+                let sender_id = match &client_device_id {
+                    Some(id) => id,
+                    None => {
+                        let _ = tx.send(WsMessage::Error {
+                            message: "Unregistered device".to_string(),
+                        });
+                        continue;
+                    }
+                };
+
+                let code = group_code.trim().to_uppercase();
+                let group_rec = sqlx::query!(
+                    "SELECT group_id, group_code, group_name, created_by FROM groups WHERE group_code = $1",
+                    code
+                )
+                .fetch_optional(&pool)
+                .await;
+
+                match group_rec {
+                    Ok(Some(grp)) => {
+                        let _ = sqlx::query!(
+                            "INSERT INTO group_members (group_id, device_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+                            grp.group_id,
+                            sender_id
+                        )
+                        .execute(&pool)
+                        .await;
+
+                        // Fetch all members
+                        let members_rec = sqlx::query!(
+                            "SELECT device_id FROM group_members WHERE group_id = $1",
+                            grp.group_id
+                        )
+                        .fetch_all(&pool)
+                        .await
+                        .unwrap_or_default();
+
+                        let mut member_infos = Vec::new();
+                        for m in members_rec {
+                            let is_online = signaling.is_device_connected(&m.device_id).await;
+                            member_infos.push(GroupMemberInfo {
+                                device_id: m.device_id,
+                                is_online,
+                            });
+                        }
+
+                        let group_info = GroupInfo {
+                            group_id: grp.group_id.clone(),
+                            group_code: grp.group_code.clone(),
+                            group_name: grp.group_name.clone(),
+                            created_by: grp.created_by.clone(),
+                            members: member_infos,
+                        };
+
+                        let _ = tx.send(WsMessage::GroupJoined {
+                            group: group_info,
+                        });
+
+                        // Broadcast to existing online members that this member joined
+                        let all_members = sqlx::query!(
+                            "SELECT device_id FROM group_members WHERE group_id = $1 AND device_id != $2",
+                            grp.group_id,
+                            sender_id
+                        )
+                        .fetch_all(&pool)
+                        .await
+                        .unwrap_or_default();
+
+                        for m in all_members {
+                            signaling
+                                .send_to_device(
+                                    &m.device_id,
+                                    WsMessage::GroupMemberJoined {
+                                        group_id: grp.group_id.clone(),
+                                        member: GroupMemberInfo {
+                                            device_id: sender_id.clone(),
+                                            is_online: true,
+                                        },
+                                    },
+                                )
+                                .await;
+                        }
+                    }
+                    Ok(None) => {
+                        let _ = tx.send(WsMessage::Error {
+                            message: "Group code not found".to_string(),
+                        });
+                    }
+                    Err(e) => {
+                        error!("Database error querying group: {}", e);
+                        let _ = tx.send(WsMessage::Error {
+                            message: "Failed to join group".to_string(),
+                        });
+                    }
+                }
+            }
+
+            WsMessage::LeaveGroup { group_id } => {
+                let sender_id = match &client_device_id {
+                    Some(id) => id,
+                    None => continue,
+                };
+
+                let _ = sqlx::query!(
+                    "DELETE FROM group_members WHERE group_id = $1 AND device_id = $2",
+                    group_id,
+                    sender_id
+                )
+                .execute(&pool)
+                .await;
+
+                let _ = tx.send(WsMessage::GroupLeft {
+                    group_id: group_id.clone(),
+                });
+
+                // Notify other members
+                let remaining = sqlx::query!(
+                    "SELECT device_id FROM group_members WHERE group_id = $1",
+                    group_id
+                )
+                .fetch_all(&pool)
+                .await
+                .unwrap_or_default();
+
+                for m in remaining {
+                    signaling
+                        .send_to_device(
+                            &m.device_id,
+                            WsMessage::GroupMemberLeft {
+                                group_id: group_id.clone(),
+                                device_id: sender_id.clone(),
+                            },
+                        )
+                        .await;
+                }
+            }
+
+            WsMessage::GetMyGroups => {
+                let sender_id = match &client_device_id {
+                    Some(id) => id,
+                    None => continue,
+                };
+
+                let groups_rec = sqlx::query!(
+                    "SELECT g.group_id, g.group_code, g.group_name, g.created_by
+                     FROM groups g
+                     JOIN group_members gm ON g.group_id = gm.group_id
+                     WHERE gm.device_id = $1",
+                    sender_id
+                )
+                .fetch_all(&pool)
+                .await
+                .unwrap_or_default();
+
+                let mut group_list = Vec::new();
+                for g in groups_rec {
+                    let members_rec = sqlx::query!(
+                        "SELECT device_id FROM group_members WHERE group_id = $1",
+                        g.group_id
+                    )
+                    .fetch_all(&pool)
+                    .await
+                    .unwrap_or_default();
+
+                    let mut member_infos = Vec::new();
+                    for m in members_rec {
+                        let is_online = signaling.is_device_connected(&m.device_id).await;
+                        member_infos.push(GroupMemberInfo {
+                            device_id: m.device_id,
+                            is_online,
+                        });
+                    }
+
+                    group_list.push(GroupInfo {
+                        group_id: g.group_id,
+                        group_code: g.group_code,
+                        group_name: g.group_name,
+                        created_by: g.created_by,
+                        members: member_infos,
+                    });
+                }
+
+                let _ = tx.send(WsMessage::GroupList {
+                    groups: group_list,
+                });
+            }
+
+            WsMessage::SendGroupChat {
+                message_id,
+                group_id,
+                content,
+            } => {
+                let sender_id = match &client_device_id {
+                    Some(id) => id,
+                    None => continue,
+                };
+
+                let members = sqlx::query!(
+                    "SELECT device_id FROM group_members WHERE group_id = $1 AND device_id != $2",
+                    group_id,
+                    sender_id
+                )
+                .fetch_all(&pool)
+                .await
+                .unwrap_or_default();
+
+                let now = chrono::Utc::now();
+                for m in members {
+                    signaling
+                        .send_to_device(
+                            &m.device_id,
+                            WsMessage::GroupChatReceived {
+                                message_id,
+                                group_id: group_id.clone(),
+                                sender_device_id: sender_id.clone(),
+                                content: content.clone(),
+                                created_at: now,
+                            },
+                        )
+                        .await;
+                }
+            }
+
+            WsMessage::InitiateGroupTransfer {
+                group_id,
+                session_id,
+                files,
+            } => {
+                let sender_id = match &client_device_id {
+                    Some(id) => id,
+                    None => continue,
+                };
+
+                let members = sqlx::query!(
+                    "SELECT device_id FROM group_members WHERE group_id = $1 AND device_id != $2",
+                    group_id,
+                    sender_id
+                )
+                .fetch_all(&pool)
+                .await
+                .unwrap_or_default();
+
+                let mut target_recipients = Vec::new();
+                for m in members {
+                    if signaling.is_device_connected(&m.device_id).await {
+                        target_recipients.push(m.device_id);
+                    }
+                }
+
+                if target_recipients.is_empty() {
+                    let _ = tx.send(WsMessage::Error {
+                        message: "No other group members are currently online".to_string(),
+                    });
+                    continue;
+                }
+
+                let _ = tx.send(WsMessage::TransferInitiated { session_id });
+
+                for receiver_id in target_recipients {
+                    // Create session record for each recipient
+                    let target_session_id = uuid::Uuid::new_v4();
+                    let _ = sqlx::query!(
+                        "INSERT INTO transfer_sessions (session_id, sender_device_id, receiver_device_id, status)
+                         VALUES ($1, $2, $3, 'active') ON CONFLICT DO NOTHING",
+                        target_session_id,
+                        sender_id,
+                        receiver_id
+                    )
+                    .execute(&pool)
+                    .await;
+
+                    for file in &files {
+                        let _ = sqlx::query!(
+                            "INSERT INTO transfer_files (file_id, session_id, file_name, file_path, file_size, file_hash, bytes_transferred, status)
+                             VALUES ($1, $2, $3, $4, $5, $6, 0, 'pending') ON CONFLICT DO NOTHING",
+                            file.file_id,
+                            target_session_id,
+                            file.file_name,
+                            file.file_path,
+                            file.file_size,
+                            file.file_hash
+                        )
+                        .execute(&pool)
+                        .await;
+                    }
+
+                    signaling
+                        .send_to_device(
+                            &receiver_id,
+                            WsMessage::IncomingTransfer {
+                                session_id: target_session_id,
+                                sender_device_id: sender_id.clone(),
+                                files: files.clone(),
+                            },
+                        )
+                        .await;
                 }
             }
 

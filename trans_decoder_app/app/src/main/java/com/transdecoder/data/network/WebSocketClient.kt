@@ -133,9 +133,96 @@ sealed class WsMessage {
     data class ChatDelivered(val message_id: String) : WsMessage()
 
     @Serializable
+    @SerialName("CREATE_GROUP")
+    data class CreateGroup(val group_name: String) : WsMessage()
+
+    @Serializable
+    @SerialName("JOIN_GROUP")
+    data class JoinGroup(val group_code: String) : WsMessage()
+
+    @Serializable
+    @SerialName("LEAVE_GROUP")
+    data class LeaveGroup(val group_id: String) : WsMessage()
+
+    @Serializable
+    @SerialName("GET_MY_GROUPS")
+    object GetMyGroups : WsMessage()
+
+    @Serializable
+    @SerialName("SEND_GROUP_CHAT")
+    data class SendGroupChat(
+        val message_id: String,
+        val group_id: String,
+        val content: String
+    ) : WsMessage()
+
+    @Serializable
+    @SerialName("INITIATE_GROUP_TRANSFER")
+    data class InitiateGroupTransfer(
+        val group_id: String,
+        val session_id: String,
+        val files: List<FileMetadataInput>
+    ) : WsMessage()
+
+    @Serializable
+    @SerialName("GROUP_CREATED")
+    data class GroupCreated(val group: GroupInfo) : WsMessage()
+
+    @Serializable
+    @SerialName("GROUP_JOINED")
+    data class GroupJoined(val group: GroupInfo) : WsMessage()
+
+    @Serializable
+    @SerialName("GROUP_LEFT")
+    data class GroupLeft(val group_id: String) : WsMessage()
+
+    @Serializable
+    @SerialName("GROUP_LIST")
+    data class GroupList(val groups: List<GroupInfo>) : WsMessage()
+
+    @Serializable
+    @SerialName("GROUP_MEMBER_JOINED")
+    data class GroupMemberJoined(
+        val group_id: String,
+        val member: GroupMemberInfo
+    ) : WsMessage()
+
+    @Serializable
+    @SerialName("GROUP_MEMBER_LEFT")
+    data class GroupMemberLeft(
+        val group_id: String,
+        val device_id: String
+    ) : WsMessage()
+
+    @Serializable
+    @SerialName("GROUP_CHAT_RECEIVED")
+    data class GroupChatReceived(
+        val message_id: String,
+        val group_id: String,
+        val sender_device_id: String,
+        val content: String,
+        val created_at: String
+    ) : WsMessage()
+
+    @Serializable
     @SerialName("ERROR")
     data class Error(val message: String) : WsMessage()
 }
+
+@Serializable
+data class GroupMemberInfo(
+    val device_id: String,
+    val is_online: Boolean
+)
+
+@Serializable
+data class GroupInfo(
+    val group_id: String,
+    val group_code: String,
+    val group_name: String,
+    val created_by: String,
+    val members: List<GroupMemberInfo>
+)
 
 @Serializable
 data class FileMetadataInput(

@@ -66,3 +66,30 @@ interface ChatDao {
     @Query("UPDATE chat_messages SET isDelivered = 1 WHERE messageId = :messageId")
     suspend fun markDelivered(messageId: String)
 }
+
+@Dao
+interface GroupDao {
+    @Query("SELECT * FROM groups ORDER BY lastActiveAt DESC")
+    fun getAllGroupsFlow(): Flow<List<GroupEntity>>
+
+    @Query("SELECT * FROM groups ORDER BY lastActiveAt DESC")
+    suspend fun getAllGroups(): List<GroupEntity>
+
+    @Query("SELECT * FROM groups WHERE groupId = :groupId LIMIT 1")
+    suspend fun getGroup(groupId: String): GroupEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertGroup(group: GroupEntity)
+
+    @Query("DELETE FROM groups WHERE groupId = :groupId")
+    suspend fun deleteGroup(groupId: String)
+}
+
+@Dao
+interface GroupChatDao {
+    @Query("SELECT * FROM group_chat_messages WHERE groupId = :groupId ORDER BY timestamp ASC")
+    fun getChatMessagesForGroupFlow(groupId: String): Flow<List<GroupChatEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertMessage(message: GroupChatEntity)
+}

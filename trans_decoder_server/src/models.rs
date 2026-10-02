@@ -99,6 +99,26 @@ pub enum WsMessage {
         receiver_device_id: String,
         content: String,
     },
+    CreateGroup {
+        group_name: String,
+    },
+    JoinGroup {
+        group_code: String,
+    },
+    LeaveGroup {
+        group_id: String,
+    },
+    GetMyGroups,
+    SendGroupChat {
+        message_id: Uuid,
+        group_id: String,
+        content: String,
+    },
+    InitiateGroupTransfer {
+        group_id: String,
+        session_id: Uuid,
+        files: Vec<FileMetadataInput>,
+    },
     
     // Server -> Client
     Registered {
@@ -140,9 +160,51 @@ pub enum WsMessage {
     ChatDelivered {
         message_id: Uuid,
     },
+    GroupCreated {
+        group: GroupInfo,
+    },
+    GroupJoined {
+        group: GroupInfo,
+    },
+    GroupLeft {
+        group_id: String,
+    },
+    GroupList {
+        groups: Vec<GroupInfo>,
+    },
+    GroupMemberJoined {
+        group_id: String,
+        member: GroupMemberInfo,
+    },
+    GroupMemberLeft {
+        group_id: String,
+        device_id: String,
+    },
+    GroupChatReceived {
+        message_id: Uuid,
+        group_id: String,
+        sender_device_id: String,
+        content: String,
+        created_at: DateTime<Utc>,
+    },
     Error {
         message: String,
     },
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct GroupMemberInfo {
+    pub device_id: String,
+    pub is_online: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct GroupInfo {
+    pub group_id: String,
+    pub group_code: String,
+    pub group_name: String,
+    pub created_by: String,
+    pub members: Vec<GroupMemberInfo>,
 }
 
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow, Clone)]
