@@ -843,7 +843,7 @@
     // App State
     let myDeviceId = localStorage.getItem('skiff_web_device_id');
     if (!myDeviceId) {
-      myDeviceId = 'web-' + crypto.randomUUID();
+      myDeviceId = crypto.randomUUID();
       localStorage.setItem('skiff_web_device_id', myDeviceId);
     }
     document.getElementById('myDeviceId').textContent = 'ID: ' + myDeviceId;
