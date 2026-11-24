@@ -22,12 +22,17 @@ android {
         }
     }
 
+    // Release signing comes from the environment (set by CI from repository secrets).
+    // Without it, assembleRelease produces an unsigned APK.
+    val signingKeystore = System.getenv("SKIFF_KEYSTORE_FILE")
     signingConfigs {
-        create("release") {
-            storeFile = file("../debug.keystore")
-            storePassword = "android"
-            keyAlias = "androiddebugkey"
-            keyPassword = "android"
+        if (signingKeystore != null) {
+            create("release") {
+                storeFile = file(signingKeystore)
+                storePassword = System.getenv("SKIFF_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("SKIFF_KEY_ALIAS")
+                keyPassword = System.getenv("SKIFF_KEY_PASSWORD")
+            }
         }
     }
 
@@ -38,7 +43,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            signingConfig = signingConfigs.getByName("release")
+            if (signingKeystore != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
     compileOptions {
