@@ -4,7 +4,7 @@
 ![Rust](https://img.shields.io/badge/server-Rust%20%2B%20Axum-DEA584?logo=rust&logoColor=white)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-signaling%20state-4169E1?logo=postgresql&logoColor=white)
 ![P2P](https://img.shields.io/badge/transfer-direct%20TCP%20%2B%20relay-6E56CF)
-![Version](https://img.shields.io/badge/app-0.0.36-2ea44f)
+![Version](https://img.shields.io/badge/app-0.0.37-2ea44f)
 
 **Peer-to-peer file sharing for Android.** Pair two phones with a 6-digit code and send files straight between them. On the same network the bytes go directly over a TCP socket. When a direct connection isn't possible, Skiff falls back to a streaming relay that passes the bytes through in memory and never stores your files on the server.
 
